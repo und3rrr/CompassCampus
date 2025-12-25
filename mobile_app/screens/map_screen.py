@@ -354,11 +354,7 @@ class MapScreen(Screen):
                 
                 # Создаём простой Route объект
                 route = Route(
-                    id="local",
-                    building_id=self.building.id,
-                    start_node=self.start_node,
-                    end_node=self.end_node,
-                    nodes=route_nodes,
+                    path=route_nodes,
                     distance=distance,
                     estimated_time=distance / 1.4,  # ~1.4 м/мин пешком
                     floor_changes=0
