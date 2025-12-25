@@ -22,9 +22,8 @@ class LoginScreen(Screen):
     """Экран входа для различных типов пользователей"""
 
     def __init__(self, auth_service: AuthenticationService = None, **kwargs):
-        # Извлекаем сервис из kwargs если он там есть
-        if auth_service is None:
-            auth_service = kwargs.pop('auth_service', None)
+        # Извлекаем сервис из kwargs (убираем перед super())
+        auth_service = auth_service or kwargs.pop('auth_service', None)
         
         super().__init__(**kwargs)
         self.auth_service = auth_service

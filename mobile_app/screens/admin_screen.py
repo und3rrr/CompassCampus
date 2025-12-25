@@ -27,13 +27,10 @@ class AdminScreen(Screen):
 
     def __init__(self, auth_service: AuthenticationService = None, 
                  qr_service = None, closure_service = None, **kwargs):
-        # Извлекаем сервисы из kwargs если они там есть
-        if auth_service is None:
-            auth_service = kwargs.pop('auth_service', None)
-        if qr_service is None:
-            qr_service = kwargs.pop('qr_service', None)
-        if closure_service is None:
-            closure_service = kwargs.pop('closure_service', None)
+        # Извлекаем сервисы из kwargs (убираем их перед super())
+        auth_service = auth_service or kwargs.pop('auth_service', None)
+        qr_service = qr_service or kwargs.pop('qr_service', None)
+        closure_service = closure_service or kwargs.pop('closure_service', None)
         
         super().__init__(**kwargs)
         self.auth_service = auth_service

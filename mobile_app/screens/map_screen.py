@@ -85,7 +85,7 @@ class MapScreen(Screen):
         self.route_panel.add_widget(self.route_info_label)
 
         # Кнопки внизу
-        button_layout = GridLayout(cols=4, size_hint_y=0.5, spacing=dp(5))
+        button_layout = GridLayout(cols=5, size_hint_y=0.5, spacing=dp(5))
 
         reset_btn = Button(text='Сброс')
         reset_btn.bind(on_press=self.on_reset_view)
@@ -98,6 +98,10 @@ class MapScreen(Screen):
         zoom_out_btn = Button(text='Зум-')
         zoom_out_btn.bind(on_press=self.on_zoom_out)
         button_layout.add_widget(zoom_out_btn)
+
+        cancel_btn = Button(text='Отмена')
+        cancel_btn.bind(on_press=self.on_cancel_selection)
+        button_layout.add_widget(cancel_btn)
 
         back_btn = Button(text='Назад')
         back_btn.bind(on_press=self.on_back)
@@ -260,10 +264,12 @@ class MapScreen(Screen):
         if self.start_node is None:
             self.start_node = node
             self.map_widget.set_start_node(node)
-            self.route_info_label.text = f'Старт: {node.name}\nВыберите конец маршрута'
+            self.route_info_label.text = f'Старт: {node.name}\nВыберите конец маршрута (нажмите Отмена чтоб переselect)'
         elif self.end_node is None:
             self.end_node = node
             self.map_widget.set_end_node(node)
+            # Показываем граф при выборе конца
+            self._highlight_graph()
             self._calculate_route()
 
     def _calculate_route(self):
@@ -316,36 +322,58 @@ class MapScreen(Screen):
         """Вернуться на главный экран"""
         self.manager.current = 'home'
 
+    def on_cancel_selection(self, instance):
+        """Отменить выбор начальной точки"""
+        self.start_node = None
+        self.end_node = None
+        self.current_route = None
+        self.map_widget.clear_selection()
+        self.route_info_label.text = 'Нажмите на две точки для построения маршрута'
+
+    def _highlight_graph(self):
+        """Подсветить граф между выбранными точками"""
+        if self.start_node and self.end_node:
+            # График автоматически отрисовывается при set_route в _calculate_route
+            pass
+
     def _show_error_popup(self, message: str):
-        """Показать ошибку"""
-        content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
-        label = Label(text=message)
-        content.add_widget(label)
+        """Показать ошибку (вызывается из потока, используем Clock)"""
+        def show_popup():
+            content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
+            label = Label(text=message)
+            content.add_widget(label)
 
-        btn = Button(text='OK', size_hint_y=0.3)
-        content.add_widget(btn)
+            btn = Button(text='OK', size_hint_y=0.3)
+            content.add_widget(btn)
 
-        popup = Popup(
-            title='Ошибка',
-            content=content,
-            size_hint=(0.8, 0.4)
-        )
-        btn.bind(on_press=popup.dismiss)
-        popup.open()
+            popup = Popup(
+                title='Ошибка',
+                content=content,
+                size_hint=(0.8, 0.4)
+            )
+            btn.bind(on_press=popup.dismiss)
+            popup.open()
+        
+        # Планируем UI операцию в главном потоке
+        Clock.schedule_once(lambda dt: show_popup(), 0)
 
     def _show_info_popup(self, message: str):
-        """Показать информационное сообщение"""
-        content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
-        label = Label(text=message)
-        content.add_widget(label)
+        """Показать информационное сообщение (вызывается из потока, используем Clock)"""
+        def show_popup():
+            content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
+            label = Label(text=message)
+            content.add_widget(label)
 
-        btn = Button(text='OK', size_hint_y=0.3)
-        content.add_widget(btn)
+            btn = Button(text='OK', size_hint_y=0.3)
+            content.add_widget(btn)
 
-        popup = Popup(
-            title='Информация',
-            content=content,
-            size_hint=(0.8, 0.4)
-        )
-        btn.bind(on_press=popup.dismiss)
-        popup.open()
+            popup = Popup(
+                title='Информация',
+                content=content,
+                size_hint=(0.8, 0.4)
+            )
+            btn.bind(on_press=popup.dismiss)
+            popup.open()
+        
+        # Планируем UI операцию в главном потоке
+        Clock.schedule_once(lambda dt: show_popup(), 0)

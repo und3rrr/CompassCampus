@@ -193,6 +193,13 @@ class MapWidget(Widget):
         self.pan_y = 0.0
         self._update_canvas()
 
+    def clear_selection(self):
+        """Очистить выбранные начальную и конечную точки"""
+        self.start_node = None
+        self.end_node = None
+        self.route = None
+        self._update_canvas()
+
     def _update_canvas(self, *args):
         """Обновить отрисовку карты"""
         self.canvas.clear()
