@@ -172,6 +172,61 @@ class GraphBuilder:
 
         return adjacency
 
+    @staticmethod
+    def find_shortest_path(start_id: str, end_id: str, edges: List[GraphEdge], 
+                          nodes_dict: Dict[str, dict]) -> Optional[Tuple[List[str], float]]:
+        """
+        Найти кратчайший путь между двумя узлами используя алгоритм Dijkstra
+        
+        Args:
+            start_id: ID стартового узла
+            end_id: ID конечного узла
+            edges: Список рёбер графа
+            nodes_dict: Словарь узлов {id: node_dict}
+            
+        Returns:
+            Кортеж (путь как список ID, общее расстояние) или None если пути нет
+        """
+        if start_id == end_id:
+            return [start_id], 0.0
+        
+        adjacency = GraphBuilder.edges_to_adjacency_list(edges)
+        
+        # Инициализация расстояний
+        distances = {node_id: float('inf') for node_id in nodes_dict.keys()}
+        distances[start_id] = 0.0
+        previous = {node_id: None for node_id in nodes_dict.keys()}
+        unvisited = set(nodes_dict.keys())
+        
+        while unvisited:
+            # Найти непосещённый узел с минимальным расстоянием
+            current = min(unvisited, key=lambda x: distances[x], default=None)
+            
+            if current is None or distances[current] == float('inf'):
+                break  # Нет пути до конца
+            
+            if current == end_id:
+                # Восстановить путь
+                path = []
+                node = end_id
+                while node is not None:
+                    path.append(node)
+                    node = previous[node]
+                return list(reversed(path)), distances[end_id]
+            
+            unvisited.remove(current)
+            
+            # Обновить расстояния соседей
+            if current in adjacency:
+                for neighbor, weight in adjacency[current]:
+                    if neighbor in unvisited:
+                        new_distance = distances[current] + weight
+                        if new_distance < distances[neighbor]:
+                            distances[neighbor] = new_distance
+                            previous[neighbor] = current
+        
+        return None  # Нет пути
+
 
 # Статические данные из cds.csv для демонстрации
 DEMO_NODES_CSV = [

@@ -16,6 +16,7 @@ from widgets.map_widget import MapWidget
 from services.api_client import get_api_client, Building, Node, Route
 from services.cache_service import get_cache_service
 from services.route_closure_service import RouteClosureService
+from services.graph_builder import GraphBuilder
 import logging
 import threading
 
@@ -282,7 +283,7 @@ class MapScreen(Screen):
         thread.start()
 
     def _fetch_route(self):
-        """Получить маршрут с API"""
+        """Получить маршрут с API или использовать локальный граф"""
         try:
             logger.info(f"Calculating route from {self.start_node.id} to {self.end_node.id}")
             route = self.api_client.get_route(
@@ -303,8 +304,83 @@ class MapScreen(Screen):
             self.route_info_label.text = info_text
 
         except Exception as e:
-            logger.error(f"Failed to calculate route: {e}")
-            self._show_error_popup(f"Ошибка маршрута: {str(e)}")
+            logger.warning(f"Failed to get route from API: {e}")
+            logger.info("Falling back to local graph-based pathfinding...")
+            self._calculate_route_locally()
+
+    def _calculate_route_locally(self):
+        """Использовать локальный граф для построения маршрута (fallback)"""
+        try:
+            if not self.building or not self.building.nodes:
+                self._show_error_popup("Ошибка: нет данных о здании")
+                return
+            
+            # Конвертируем Node объекты в словари для графа
+            nodes_dicts = []
+            nodes_map = {}
+            for node in self.building.nodes:
+                node_dict = {
+                    'Id': node.id,
+                    'Name': node.name,
+                    'Floor': node.floor,
+                    'Type': node.type,
+                    'X': node.x,
+                    'Y': node.y
+                }
+                nodes_dicts.append(node_dict)
+                nodes_map[str(node.id)] = node
+            
+            # Строим граф
+            edges = GraphBuilder.build_edges_from_nodes(nodes_dicts)
+            
+            # Находим кратчайший путь
+            path_result = GraphBuilder.find_shortest_path(
+                str(self.start_node.id),
+                str(self.end_node.id),
+                edges,
+                {nd['Id']: nd for nd in nodes_dicts}
+            )
+            
+            if path_result:
+                path_ids, distance = path_result
+                
+                # Создаём объект Route с локально найденным маршрутом
+                route_nodes = []
+                for node_id in path_ids:
+                    for node in self.building.nodes:
+                        if str(node.id) == node_id:
+                            route_nodes.append(node)
+                            break
+                
+                # Создаём простой Route объект
+                route = Route(
+                    id="local",
+                    building_id=self.building.id,
+                    start_node=self.start_node,
+                    end_node=self.end_node,
+                    nodes=route_nodes,
+                    distance=distance,
+                    estimated_time=distance / 1.4,  # ~1.4 м/мин пешком
+                    floor_changes=0
+                )
+                
+                self.current_route = route
+                self.map_widget.set_route(route)
+                
+                # Обновляем информацию о маршруте
+                info_text = (
+                    f'Маршрут (локальный): {self.start_node.name} → {self.end_node.name}\n'
+                    f'Расстояние: {distance:.0f}м | '
+                    f'Время: {distance/1.4:.0f}мин'
+                )
+                self.route_info_label.text = info_text
+                logger.info(f"Local pathfinding successful: {len(route_nodes)} nodes")
+            else:
+                self._show_error_popup("Маршрут не найден (нет пути между точками)")
+                
+        except Exception as e:
+            logger.error(f"Local pathfinding failed: {e}")
+            self._show_error_popup(f"Ошибка построения маршрута: {str(e)}")
 
     def on_reset_view(self, instance):
         """Сброс панорамы и масштаба"""
