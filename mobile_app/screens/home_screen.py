@@ -54,15 +54,23 @@ class HomeScreen(Screen):
         main_layout.add_widget(scroll_view)
 
         # Кнопки внизу
-        button_layout = BoxLayout(size_hint_y=0.15, spacing=dp(10))
+        button_layout = BoxLayout(size_hint_y=0.15, spacing=dp(5))
 
         refresh_btn = Button(
             text='Обновить',
-            size_hint_x=0.35,
+            size_hint_x=0.25,
             background_color=(0.3, 0.6, 1.0, 1.0)
         )
         refresh_btn.bind(on_press=self.on_refresh)
         button_layout.add_widget(refresh_btn)
+
+        qr_btn = Button(
+            text='QR',
+            size_hint_x=0.15,
+            background_color=(0.0, 0.7, 0.3, 1.0)
+        )
+        qr_btn.bind(on_press=self.on_qr_scanner)
+        button_layout.add_widget(qr_btn)
 
         history_btn = Button(
             text='История',
@@ -74,7 +82,7 @@ class HomeScreen(Screen):
 
         admin_btn = Button(
             text='Админ',
-            size_hint_x=0.2,
+            size_hint_x=0.15,
             background_color=(0.7, 0.5, 0.5, 1.0)
         )
         admin_btn.bind(on_press=self.on_admin)
@@ -82,7 +90,7 @@ class HomeScreen(Screen):
 
         settings_btn = Button(
             text='Выход',
-            size_hint_x=0.2,
+            size_hint_x=0.15,
             background_color=(0.7, 0.7, 0.7, 1.0)
         )
         settings_btn.bind(on_press=self.on_settings)
@@ -165,6 +173,10 @@ class HomeScreen(Screen):
     def on_history(self, instance):
         """Открыть историю посещений"""
         self.manager.current = 'history'
+
+    def on_qr_scanner(self, instance):
+        """Открыть QR сканер"""
+        self.manager.current = 'qr_scanner'
 
     def on_admin(self, instance):
         """Открыть админ-панель"""

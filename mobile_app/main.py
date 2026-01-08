@@ -8,6 +8,7 @@ from kivy.logger import Logger
 from screens.login_screen import LoginScreen
 from screens.home_screen import HomeScreen
 from screens.map_screen import MapScreen
+from screens.qr_scanner_screen import QRScannerScreen
 from screens.admin_screen import AdminScreen
 from screens.history_screen import HistoryScreen
 from services.api_client import init_api_client
@@ -70,6 +71,7 @@ class CampusCompassApp(App):
         home_screen = HomeScreen(name='home')
         map_screen = MapScreen(name='map')
         map_screen.closure_service = closure_service  # Устанавливаем сервис закрытий
+        qr_scanner_screen = QRScannerScreen(qr_service=qr_service, name='qr_scanner')
         admin_screen = AdminScreen(auth_service=auth_service, qr_service=qr_service, 
                                    closure_service=closure_service, name='admin')
         history_screen = HistoryScreen(auth_service=auth_service, name='history')
@@ -77,6 +79,7 @@ class CampusCompassApp(App):
         screen_manager.add_widget(login_screen)
         screen_manager.add_widget(home_screen)
         screen_manager.add_widget(map_screen)
+        screen_manager.add_widget(qr_scanner_screen)
         screen_manager.add_widget(admin_screen)
         screen_manager.add_widget(history_screen)
 
