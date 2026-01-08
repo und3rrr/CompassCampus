@@ -323,7 +323,7 @@ class MapScreen(Screen):
                     'Id': node.id,
                     'Name': node.name,
                     'Floor': node.floor,
-                    'Type': node.type,
+                    'Type': node.node_type,  # Исправлено: node_type вместо type
                     'X': node.x,
                     'Y': node.y
                 }
