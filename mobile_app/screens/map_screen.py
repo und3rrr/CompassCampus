@@ -300,6 +300,51 @@ class MapScreen(Screen):
         if self.start_node:
             self._calculate_route()
 
+    def set_end_node_from_qr(self, node_id: str, node_name: str, floor: int):
+        """Установить конечный узел из QR кода"""
+        try:
+            # Получаем все узлы из кэша
+            if self.building is None:
+                self.building = self.cache_service.get_building()
+            
+            if not self.building or not self.building.nodes:
+                logger.warning("Building or nodes not loaded")
+                return
+            
+            # Ищем узел по ID
+            end_node = None
+            for node in self.building.nodes:
+                if node.node_id == node_id:
+                    end_node = node
+                    break
+            
+            if end_node:
+                self.end_node = end_node
+                self.map_widget.set_end_node(end_node)
+                
+                # Переходим на нужный этаж
+                self.floor_spinner.text = str(floor)
+                
+                # Показываем информацию о найденном узле
+                self.route_info_label.text = f'Целевое помещение: {node_name}\nЭтаж: {floor}'
+                
+                # Если есть стартовая точка, строим маршрут
+                if self.start_node:
+                    self._calculate_route()
+                else:
+                    # Выбираем стартовую точку автоматически (первый узел)
+                    if self.building.nodes:
+                        self.start_node = self.building.nodes[0]
+                        self.map_widget.set_start_node(self.start_node)
+                        self.route_info_label.text = f'Старт: {self.start_node.name}\nЦель: {node_name}'
+                        self._calculate_route()
+                
+                logger.info(f"QR: Set end node {node_name} (ID: {node_id})")
+            else:
+                logger.warning(f"Node with ID {node_id} not found in building")
+        except Exception as e:
+            logger.error(f"Error setting end node from QR: {e}")
+
     def on_map_node_selected(self, node: Node):
         """Обработка выбора узла на карте"""
         if self.start_node is None:

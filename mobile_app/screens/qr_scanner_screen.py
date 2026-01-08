@@ -103,15 +103,30 @@ class QRScannerScreen(Screen):
                 message = f"✅ Найдено: {mapping.node_name} (Этаж {mapping.floor})"
                 logger.info(f"QR code scanned: {mapping.node_name}")
                 
-                # Передаём информацию в MapScreen
-                # TODO: Реализовать переход на MapScreen с автоматическим выбором узла
-                self._show_message(message)
+                # Передаём информацию в MapScreen и переходим туда
+                map_screen = self.manager.get_screen('map')
+                if map_screen:
+                    # Устанавливаем конечный узел и строим маршрут
+                    map_screen.set_end_node_from_qr(mapping.node_id, mapping.node_name, mapping.floor)
+                    # Переходим на экран карты
+                    Clock.schedule_once(lambda dt: self._navigate_to_map(), 0.5)
+                else:
+                    self._show_message(f"⚠️ Экран карты недоступен")
+                    logger.error("Map screen not found in manager")
             else:
                 self._show_message(f"❌ QR код не найден: {qr_code}")
                 logger.warning(f"Unknown QR code: {qr_code}")
         except Exception as e:
             logger.error(f"Error processing QR code: {e}")
             self._show_message(f"Ошибка: {str(e)}")
+
+    def _navigate_to_map(self):
+        """Навигация на MapScreen"""
+        try:
+            self.manager.current = 'map'
+        except Exception as e:
+            logger.error(f"Failed to navigate to map: {e}")
+            self._show_message(f"Ошибка навигации: {str(e)}")
 
     def _show_message(self, message: str):
         """Показать сообщение"""
