@@ -9,6 +9,7 @@ from kivy.uix.label import Label
 from kivy.uix.spinner import Spinner
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
 from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.clock import Clock
@@ -69,6 +70,15 @@ class MapScreen(Screen):
         search_btn.bind(on_press=self.on_search)
         search_layout.add_widget(search_btn)
         top_panel.add_widget(search_layout)
+
+        # Список результатов поиска (dropdown под поиском)
+        self.search_results_container = BoxLayout(
+            orientation='vertical',
+            size_hint_y=None,
+            height=0,  # Скрыт по умолчанию
+            spacing=dp(2)
+        )
+        top_panel.add_widget(self.search_results_container)
 
         main_layout.add_widget(top_panel)
 
@@ -218,40 +228,70 @@ class MapScreen(Screen):
             results = self.api_client.search_nodes(self.building.id, query)
             if results:
                 # Показываем результаты в попапе
-                self._show_search_results(results)
+                Clock.schedule_once(lambda dt: self._show_search_results(results), 0)
             else:
-                self._show_info_popup("Не найдено")
+                Clock.schedule_once(lambda dt: self._show_info_popup("Не найдено"), 0)
         except Exception as e:
-            logger.error(f"Search failed: {e}")
-            self._show_error_popup(str(e))
+            logger.warning(f"API search failed: {e}, trying local search...")
+            # Fallback на локальный поиск
+            self._perform_local_search(query)
+
+    def _perform_local_search(self, query: str):
+        """Выполнить локальный поиск по названиям узлов"""
+        try:
+            if not self.building or not self.building.nodes:
+                Clock.schedule_once(lambda dt: self._show_error_popup("Нет данных о здании"), 0)
+                return
+            
+            # Ищем узлы по названию (case-insensitive)
+            query_lower = query.lower()
+            results = []
+            for node in self.building.nodes:
+                if query_lower in node.name.lower():
+                    results.append(node)
+            
+            if results:
+                Clock.schedule_once(lambda dt: self._show_search_results(results), 0)
+            else:
+                Clock.schedule_once(lambda dt: self._show_info_popup(f"Не найдено: '{query}'"), 0)
+        except Exception as e:
+            logger.error(f"Local search failed: {e}")
+            Clock.schedule_once(lambda dt: self._show_error_popup(f"Ошибка поиска: {str(e)}"), 0)
 
     def _show_search_results(self, results: list):
-        """Показать результаты поиска"""
-        content = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
-
+        """Показать результаты поиска в dropdown под поиском"""
+        # Очищаем предыдущие результаты
+        self.search_results_container.clear_widgets()
+        
+        if not results:
+            self.search_results_container.height = 0
+            return
+        
+        # Добавляем кнопки результатов
         for node in results:
             btn = Button(
                 text=f'{node.name} (Этаж {node.floor})',
                 size_hint_y=None,
-                height=dp(50),
+                height=dp(45),
                 background_color=(0.3, 0.6, 1.0, 1.0)
             )
             btn.node = node
             btn.bind(on_press=self.on_node_selected_from_search)
-            content.add_widget(btn)
-
-        popup = Popup(
-            title='Результаты поиска',
-            content=content,
-            size_hint=(0.9, 0.6)
-        )
-        popup.open()
+            self.search_results_container.add_widget(btn)
+        
+        # Вычисляем высоту контейнера (не более 150px для dropdown)
+        max_height = min(len(results) * dp(45), dp(150))
+        self.search_results_container.height = max_height
 
     def on_node_selected_from_search(self, instance):
         """Обработка выбора узла из поиска"""
         node = instance.node
         self.end_node = node
         self.map_widget.set_end_node(node)
+
+        # Закрываем dropdown результатов
+        self.search_results_container.height = 0
+        self.search_input.text = ''  # Очищаем поле поиска
 
         # Автоматически переходим на этаж узла
         self.floor_spinner.text = str(node.floor)
@@ -312,7 +352,7 @@ class MapScreen(Screen):
         """Использовать локальный граф для построения маршрута (fallback)"""
         try:
             if not self.building or not self.building.nodes:
-                self._show_error_popup("Ошибка: нет данных о здании")
+                Clock.schedule_once(lambda dt: self._show_error_popup("Ошибка: нет данных о здании"), 0)
                 return
             
             # Конвертируем Node объекты в словари для графа
@@ -363,19 +403,23 @@ class MapScreen(Screen):
                     floor_changes=0
                 )
                 
-                self.current_route = route
-                self.map_widget.set_route(route)
+                # Выполняем UI операции в главном потоке
+                def update_route():
+                    self.current_route = route
+                    self.map_widget.set_route(route)
+                    
+                    # Обновляем информацию о маршруте
+                    info_text = (
+                        f'Маршрут (локальный): {self.start_node.name} → {self.end_node.name}\n'
+                        f'Расстояние: {distance:.0f}м | '
+                        f'Время: {distance/1.4:.0f}мин'
+                    )
+                    self.route_info_label.text = info_text
+                    logger.info(f"Local pathfinding successful: {len(route_nodes)} nodes")
                 
-                # Обновляем информацию о маршруте
-                info_text = (
-                    f'Маршрут (локальный): {self.start_node.name} → {self.end_node.name}\n'
-                    f'Расстояние: {distance:.0f}м | '
-                    f'Время: {distance/1.4:.0f}мин'
-                )
-                self.route_info_label.text = info_text
-                logger.info(f"Local pathfinding successful: {len(route_nodes)} nodes")
+                Clock.schedule_once(lambda dt: update_route(), 0)
             else:
-                self._show_error_popup("Маршрут не найден (нет пути между точками)")
+                Clock.schedule_once(lambda dt: self._show_error_popup("Маршрут не найден (нет пути между точками)"), 0)
                 
         except Exception as e:
             logger.error(f"Local pathfinding failed: {e}")
