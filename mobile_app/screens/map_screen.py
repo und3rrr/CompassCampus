@@ -320,7 +320,7 @@ class MapScreen(Screen):
             nodes_map = {}
             for node in self.building.nodes:
                 node_dict = {
-                    'Id': node.id,
+                    'Id': str(node.id),  # Убеждаемся что ID строка
                     'Name': node.name,
                     'Floor': node.floor,
                     'Type': node.node_type,  # Исправлено: node_type вместо type
@@ -334,11 +334,14 @@ class MapScreen(Screen):
             edges = GraphBuilder.build_edges_from_nodes(nodes_dicts)
             
             # Находим кратчайший путь
+            # Создаём словарь с ID в виде строк для совместимости
+            nodes_dict_for_search = {str(nd['Id']): nd for nd in nodes_dicts}
+            
             path_result = GraphBuilder.find_shortest_path(
                 str(self.start_node.id),
                 str(self.end_node.id),
                 edges,
-                {nd['Id']: nd for nd in nodes_dicts}
+                nodes_dict_for_search
             )
             
             if path_result:
