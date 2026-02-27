@@ -1,288 +1,418 @@
 """
-Кастомный виджет для отрисовки карты в Kivy
+Кастомный виджет для отрисовки карты в Kivy с использованием PNG
+Упрощённая версия без SVG функционала
+Поддержка: центрирование, граница, вращение
 """
 from kivy.uix.widget import Widget
-from kivy.graphics import Color, Ellipse, Line, Rectangle
+from kivy.graphics import Color, Ellipse, Line, Rectangle, PushMatrix, PopMatrix, Rotate, Translate
 from kivy.core.window import Window
+from kivy.clock import Clock
 from kivy.metrics import dp
 from typing import List, Tuple, Optional
 from services.api_client import Node, Route
 import logging
+import os
+import time
+import math
 
 logger = logging.getLogger(__name__)
 
 
 class MapWidget(Widget):
-    """Виджет для отрисовки карты здания"""
+    """Виджет карты с поддержкой PNG изображений"""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.nodes: List[Node] = []
-        self.edges: List[Tuple[str, str]] = []
-        self.route: Optional[Route] = None
-        self.selected_node: Optional[Node] = None
-        self.start_node: Optional[Node] = None
-        self.end_node: Optional[Node] = None
-        self.closed_edges: List[Tuple[str, str]] = []
-        self.closed_nodes: List[str] = []
         
-        # Callback для выбора узла
-        self.on_node_selected_callback = None
-
-        # Параметры отрисовки
-        self.zoom = 1.0
+        # Параметры зума и панорамирования
+        self.zoom = 0.04
         self.pan_x = 0.0
         self.pan_y = 0.0
-        self.node_radius = dp(8)
-        self.line_width = dp(2)
+        self.min_zoom = 0.01
+        self.max_zoom = 0.5
+        self.rotation = 0.0  # Угол вращения в градусах
+        
+        # Данные карты
+        self.nodes: List[Node] = []
+        self.edges: List[Tuple[int, int]] = []
+        self.closed_routes: List[Route] = []
+        self.route_nodes: List[int] = []
+        
+        # Параметры отрисовки
+        self.node_color = (0.0, 0.7, 1.0, 1.0)  # Синий
+        self.edge_color = (0.5, 0.5, 0.5, 1.0)  # Серый
+        self.closed_color = (1.0, 0.0, 0.0, 1.0)  # Красный
+        self.route_color = (0.0, 1.0, 0.0, 1.0)  # Зелёный
+        self.node_radius = 8
+        self.edge_width = 2
+        
+        # Фоновое изображение (PNG)
+        self.background_image_path: Optional[str] = None
+        self.background_opacity = 1.0
+        self.background_enabled = True
+        self.svg_width = 9757.0
+        self.svg_height = 3408.0
+        
+        # Multi-touch для вращения
+        self.active_touches = []  # Список активных touch-событий
+        self.touch_start_angle = 0
+        self.rotation_start = 0
+        
+        # Привязываем события и рисование
+        self.bind(size=self._on_size)
+        
+        # Первоначальная отрисовка
+        Clock.schedule_once(self._draw_initial, 0.1)
+        
+        logger.info("[MapWidget] Initialized with PNG backend (no SVG) + rotation support")
 
-        # Цвета для различных типов узлов
-        self.node_colors = {
-            'Room': (0.3, 0.6, 1.0, 1.0),  # Синий
-            'Corridor': (0.8, 0.8, 0.8, 1.0),  # Серый
-            'Staircase': (1.0, 0.6, 0.2, 1.0),  # Оранжевый
-            'Elevator': (1.0, 0.2, 0.2, 1.0),  # Красный
-        }
-
-        # Привязка событий
-        self.bind(size=self._update_canvas)
-
-    def set_nodes(self, nodes: List[Node]):
-        """
-        Установить список узлов для отрисовки
-
-        Args:
-            nodes: Список объектов Node
-        """
-        self.nodes = nodes
+    def _draw_initial(self, dt):
+        """Первоначальная отрисовка"""
         self._update_canvas()
 
-    def set_edges(self, edges: List[Tuple[str, str]]):
-        """
-        Установить список ребер графа
-
-        Args:
-            edges: Список кортежей (from_id, to_id)
-        """
-        self.edges = edges
+    def _on_size(self, *args):
+        """Обработчик изменения размера"""
         self._update_canvas()
 
-    def set_route(self, route: Optional[Route]):
+    def _center_map(self):
+        """Центрировать карту в окне"""
+        # Вычисляем зум чтобы вся карта влезла в экран
+        width_zoom = self.width / self.svg_width if self.svg_width else 0.04
+        height_zoom = self.height / self.svg_height if self.svg_height else 0.04
+        self.zoom = min(width_zoom, height_zoom) * 0.95  # 95% от доступного места
+        
+        # Вычисляем позицию для центрирования
+        map_width_on_screen = self.svg_width * self.zoom
+        map_height_on_screen = self.svg_height * self.zoom
+        
+        self.pan_x = (self.width - map_width_on_screen) / 2
+        self.pan_y = (self.height - map_height_on_screen) / 2
+        
+        logger.debug(f"[MapWidget] Centered: zoom={self.zoom:.4f}, pan=({self.pan_x:.1f}, {self.pan_y:.1f})")
+
+    def _clamp_pan(self):
+        """Ограничить панорамирование чтобы карта не ушла полностью за пределы"""
+        if not self.svg_width or not self.svg_height:
+            return
+        
+        map_width = self.svg_width * self.zoom
+        map_height = self.svg_height * self.zoom
+        
+        # Padding - отступ для мягких границ (позволяет карте немного выходить за пределы)
+        # Это даёт возможность двигать карту даже при минимальном зуме
+        padding = 50  # пиксели
+        
+        # Левая/правая граница: карта может выходить на padding пикселей за пределы
+        self.pan_x = max(-map_width + padding, min(self.pan_x, self.width - padding))
+        
+        # Нижняя/верхняя граница: аналогично
+        self.pan_y = max(-map_height + padding, min(self.pan_y, self.height - padding))
+
+    def load_background_image(self, image_path: str):
+        """
+        Загрузить фоновое изображение (PNG)
+        
+        Args:
+            image_path: Путь к PNG файлу
+        """
+        if image_path and not os.path.exists(image_path):
+            logger.warning(f"Image not found: {image_path}")
+            return
+        
+        self.background_image_path = image_path
+        if image_path:
+            logger.info(f"[MapWidget] Loaded background image: {image_path}")
+            # Центрируем карту после загрузки
+            Clock.schedule_once(lambda dt: self._center_map(), 0)
+            Clock.schedule_once(lambda dt: self._update_canvas(), 0.05)
+
+    def set_background_image(self, image_path: str):
+        """Alias для load_background_image для обратной совместимости"""
+        if image_path is None:
+            self.background_image_path = None
+        else:
+            self.load_background_image(image_path)
+
+    def set_nodes(self, nodes: List[Node], edges: List[Tuple[int, int]] = None, 
+                  closed_routes: List[Route] = None):
+        """
+        Установить узлы и рёбра графа
+        
+        Args:
+            nodes: Список узлов
+            edges: Список рёбер (пары индексов узлов)
+            closed_routes: Список закрытых маршрутов
+        """
+        self.nodes = nodes or []
+        self.edges = edges or []
+        self.closed_routes = closed_routes or []
+        
+        logger.debug(f"[MapWidget] Set {len(self.nodes)} nodes, {len(self.edges)} edges")
+        Clock.schedule_once(lambda dt: self._update_canvas(), 0)
+
+    def set_edges(self, edges: List[Tuple[int, int]]):
+        """
+        Установить рёбра графа
+        
+        Args:
+            edges: Список рёбер (пары индексов узлов)
+        """
+        self.edges = edges or []
+        logger.debug(f"[MapWidget] Set {len(self.edges)} edges")
+        Clock.schedule_once(lambda dt: self._update_canvas(), 0)
+
+    def set_closed_routes(self, closed_edges: List[Tuple[int, int]], closed_nodes: List[int]):
+        """
+        Установить закрытые маршруты
+        
+        Args:
+            closed_edges: Список закрытых рёбер (пары ID узлов)
+            closed_nodes: Список ID узлов на закрытых маршрутах
+        """
+        # Конвертируем в список Route (структура compat)
+        if closed_nodes:
+            self.closed_routes = [type('Route', (), {'nodes': closed_nodes})()]
+        logger.debug(f"[MapWidget] Set closed routes: {len(closed_nodes)} nodes")
+        Clock.schedule_once(lambda dt: self._update_canvas(), 0)
+
+    def set_route(self, node_ids: List[int]):
         """
         Установить маршрут для отрисовки
-
+        
         Args:
-            route: Объект Route или None
+            node_ids: Список ID узлов маршрута
         """
-        self.route = route
-        self._update_canvas()
+        self.route_nodes = node_ids
+        Clock.schedule_once(lambda dt: self._update_canvas(), 0)
 
-    def set_start_node(self, node: Optional[Node]):
-        """Установить стартовый узел"""
-        self.start_node = node
-        self._update_canvas()
-
-    def set_end_node(self, node: Optional[Node]):
-        """Установить конечный узел"""
-        self.end_node = node
-        self._update_canvas()
-
-    def set_closed_routes(self, closed_edges: List[Tuple[str, str]], closed_nodes: List[str]):
-        """
-        Установить закрытые маршруты и узлы для визуализации
-
-        Args:
-            closed_edges: Список кортежей (from_id, to_id) закрытых маршрутов
-            closed_nodes: Список ID закрытых узлов
-        """
-        self.closed_edges = closed_edges
-        self.closed_nodes = closed_nodes
-        self._update_canvas()
-
-    def _screen_to_world(self, screen_x: float, screen_y: float) -> Tuple[float, float]:
-        """
-        Преобразовать координаты экрана в координаты мира
-
-        Args:
-            screen_x: X координата на экране
-            screen_y: Y координата на экране
-
-        Returns:
-            Кортеж (world_x, world_y)
-        """
-        world_x = (screen_x - self.pan_x) / self.zoom
-        world_y = (screen_y - self.pan_y) / self.zoom
-        return world_x, world_y
-
-    def _world_to_screen(self, world_x: float, world_y: float) -> Tuple[float, float]:
-        """
-        Преобразовать координаты мира в координаты экрана
-
-        Args:
-            world_x: X координата в мире
-            world_y: Y координата в мире
-
-        Returns:
-            Кортеж (screen_x, screen_y)
-        """
-        screen_x = world_x * self.zoom + self.pan_x
-        screen_y = world_y * self.zoom + self.pan_y
-        return screen_x, screen_y
+    def clear_selection(self):
+        """Очистить выделение маршрута"""
+        self.route_nodes = []
+        Clock.schedule_once(lambda dt: self._update_canvas(), 0)
 
     def on_touch_down(self, touch):
-        """Обработка касания по карте"""
-        if not self.collide_point(*touch.pos):
-            return False
-
-        # Преобразуем координаты
-        world_x, world_y = self._screen_to_world(touch.x, touch.y)
-
-        # Проверяем, какой узел был нажат
-        for node in self.nodes:
-            dx = node.x - world_x
-            dy = node.y - world_y
-            distance = (dx**2 + dy**2) ** 0.5
-
-            if distance <= self.node_radius / self.zoom:
-                self.selected_node = node
-                logger.info(f"Selected node: {node.name}")
-                
-                # Вызываем callback если он установлен
-                if self.on_node_selected_callback:
-                    self.on_node_selected_callback(node)
-                
-                self._update_canvas()
-                return True
-
-        return False
+        """Обработка нажатия мыши"""
+        if self.collide_point(*touch.pos):
+            touch.grab(self)
+            touch.ud['zoom_start'] = self.zoom
+            touch.ud['pan_start'] = (self.pan_x, self.pan_y)
+            touch.ud['mouse_pos'] = touch.pos
+            
+            # Добавляем в активные touches
+            self.active_touches.append(touch)
+            
+            return True
+        return super().on_touch_down(touch)
 
     def on_touch_move(self, touch):
-        """Обработка перемещения по карте (pan)"""
-        if not self.collide_point(*touch.pos):
-            return False
-
-        if hasattr(touch, 'ud') and 'previous' in touch.ud:
-            # Панорамирование карты
-            self.pan_x += touch.x - touch.ud['previous'][0]
-            self.pan_y += touch.y - touch.ud['previous'][1]
-            self._update_canvas()
-
-        touch.ud['previous'] = (touch.x, touch.y)
-        return True
+        """Обработка движения мыши/пальца"""
+        if touch.grab_current is self:
+            # Multi-touch вращение (два пальца)
+            if len(self.active_touches) >= 2:
+                # Вычисляем угол между двумя точками
+                touch1, touch2 = self.active_touches[0], self.active_touches[1]
+                
+                # Текущий угол
+                dx = touch2.pos[0] - touch1.pos[0]
+                dy = touch2.pos[1] - touch1.pos[1]
+                current_angle = math.degrees(math.atan2(dy, dx))
+                
+                # Начальный угол
+                if 'start_angle' not in touch.ud:
+                    start_dx = touch2.ud.get('mouse_pos', touch2.pos)[0] - touch1.ud.get('mouse_pos', touch1.pos)[0]
+                    start_dy = touch2.ud.get('mouse_pos', touch2.pos)[1] - touch1.ud.get('mouse_pos', touch1.pos)[1]
+                    touch.ud['start_angle'] = math.degrees(math.atan2(start_dy, start_dx))
+                    touch.ud['rotation_start'] = self.rotation
+                
+                # Вычисляем дельту вращения
+                angle_delta = current_angle - touch.ud['start_angle']
+                self.rotation = touch.ud['rotation_start'] + angle_delta
+                
+                # Ограничиваем вращение 0-360
+                self.rotation = self.rotation % 360
+                
+                self._update_canvas()
+            else:
+                # Single-touch панорамирование
+                dx = touch.pos[0] - touch.ud.get('mouse_pos', touch.pos)[0]
+                dy = touch.pos[1] - touch.ud.get('mouse_pos', touch.pos)[1]
+                
+                self.pan_x += dx
+                self.pan_y += dy
+                
+                # Применяем границы
+                self._clamp_pan()
+                
+                touch.ud['mouse_pos'] = touch.pos
+                self._update_canvas()
+            
+            return True
+        return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
-        """Обработка отпускания касания"""
-        if 'previous' in touch.ud:
-            del touch.ud['previous']
-        return False
+        """Обработка отпускания мыши"""
+        if touch.grab_current is self:
+            # Удаляем из активных touches
+            if touch in self.active_touches:
+                self.active_touches.remove(touch)
+            touch.ungrab(self)
+            return True
+        return super().on_touch_up(touch)
+
+    def on_mouse_scroll(self, window, scroll_type, me):
+        """Обработка прокрутки колеса мыши для зума"""
+        if not self.collide_point(me.x, me.y):
+            return
+        
+        zoom_factor = 1.1
+        if me.z > 0:  # Zoom in
+            new_zoom = self.zoom * zoom_factor
+        else:  # Zoom out
+            new_zoom = self.zoom / zoom_factor
+        
+        new_zoom = max(self.min_zoom, min(self.max_zoom, new_zoom))
+        
+        # Приближаем к точке курсора
+        mx, my = me.x - self.x, me.y - self.y
+        self.pan_x -= mx * (new_zoom - self.zoom)
+        self.pan_y -= my * (new_zoom - self.zoom)
+        
+        self.zoom = new_zoom
+        self._clamp_pan()
+        self._update_canvas()
 
     def zoom_in(self):
-        """Увеличить масштаб карты"""
-        self.zoom *= 1.2
+        """Увеличить зум"""
+        new_zoom = self.zoom * 1.2
+        new_zoom = min(new_zoom, self.max_zoom)
+        self.zoom = new_zoom
+        self._clamp_pan()
         self._update_canvas()
 
     def zoom_out(self):
-        """Уменьшить масштаб карты"""
-        self.zoom /= 1.2
+        """Уменьшить зум"""
+        new_zoom = self.zoom / 1.2
+        new_zoom = max(new_zoom, self.min_zoom)
+        self.zoom = new_zoom
+        self._clamp_pan()
         self._update_canvas()
 
-    def reset_view(self):
-        """Сбросить панораму и масштаб"""
-        self.zoom = 1.0
-        self.pan_x = 0.0
-        self.pan_y = 0.0
+    def fit_to_screen(self):
+        """Вместить всю карту в экран"""
+        self._center_map()
+        self.rotation = 0.0
         self._update_canvas()
 
-    def clear_selection(self):
-        """Очистить выбранные начальную и конечную точки"""
-        self.start_node = None
-        self.end_node = None
-        self.route = None
-        self._update_canvas()
-
-    def _update_canvas(self, *args):
+    def _update_canvas(self):
         """Обновить отрисовку карты"""
         self.canvas.clear()
-
-        if not self.nodes:
-            return
-
+        
         with self.canvas:
-            # Фон
+            # Белый фон
             Color(1, 1, 1, 1)
-            Rectangle(pos=self.pos, size=self.size)
-
-            # Отрисовка ребер (линии связи) - обычные связи серым цветом
-            Color(0.7, 0.7, 0.7, 0.5)
-            for from_id, to_id in self.edges:
-                # Пропускаем закрытые маршруты
-                if (from_id, to_id) in self.closed_edges or (to_id, from_id) in self.closed_edges:
-                    continue
-                    
-                from_node = next((n for n in self.nodes if n.id == from_id), None)
-                to_node = next((n for n in self.nodes if n.id == to_id), None)
-
-                if from_node and to_node:
-                    screen_x1, screen_y1 = self._world_to_screen(from_node.x, from_node.y)
-                    screen_x2, screen_y2 = self._world_to_screen(to_node.x, to_node.y)
-                    Line(points=[screen_x1, screen_y1, screen_x2, screen_y2], width=self.line_width)
-
-            # Отрисовка закрытых маршрутов красным цветом
-            Color(1.0, 0.0, 0.0, 0.7)
-            for from_id, to_id in self.closed_edges:
-                from_node = next((n for n in self.nodes if n.id == from_id), None)
-                to_node = next((n for n in self.nodes if n.id == to_id), None)
-
-                if from_node and to_node:
-                    screen_x1, screen_y1 = self._world_to_screen(from_node.x, from_node.y)
-                    screen_x2, screen_y2 = self._world_to_screen(to_node.x, to_node.y)
-                    Line(points=[screen_x1, screen_y1, screen_x2, screen_y2], width=dp(4))
-
-            # Отрисовка маршрута если есть
-            if self.route:
-                Color(0.2, 0.8, 0.2, 0.7)
-                route_points = []
-                for node in self.route.path:
-                    screen_x, screen_y = self._world_to_screen(node.x, node.y)
-                    route_points.extend([screen_x, screen_y])
-
-                if route_points:
-                    Line(points=route_points, width=dp(4))
-
-            # Отрисовка узлов
-            for node in self.nodes:
-                screen_x, screen_y = self._world_to_screen(node.x, node.y)
-
-                # Выбираем цвет в зависимости от типа узла
-                color = self.node_colors.get(node.node_type, (0.5, 0.5, 0.5, 1.0))
-
-                # Если узел закрыт, показываем его красным
-                if node.id in self.closed_nodes:
-                    Color(1.0, 0.0, 0.0, 1.0)  # Красный для закрытых узлов
-                # Выделяем стартовый и конечный узлы
-                elif node == self.start_node:
-                    Color(0.2, 1.0, 0.2, 1.0)  # Зелёный
-                elif node == self.end_node:
-                    Color(0.2, 0.8, 1.0, 1.0)  # Голубой
-                elif node == self.selected_node:
-                    Color(1.0, 1.0, 0.0, 1.0)  # Жёлтый
-                else:
-                    Color(*color)
-
-                # Отрисовка круга узла
-                Ellipse(
-                    pos=(screen_x - self.node_radius, screen_y - self.node_radius),
-                    size=(self.node_radius * 2, self.node_radius * 2)
-                )
-
-    def get_selected_node(self) -> Optional[Node]:
-        """Получить выбранный узел"""
-        return self.selected_node
-
-    def clear(self):
-        """Очистить карту"""
-        self.nodes = []
-        self.edges = []
-        self.route = None
-        self.selected_node = None
-        self._update_canvas()
+            Rectangle(pos=(0, 0), size=self.size)
+            
+            # Вычисляем центр карты для вращения
+            map_width_on_screen = self.svg_width * self.zoom
+            map_height_on_screen = self.svg_height * self.zoom
+            center_x = self.pan_x + map_width_on_screen / 2
+            center_y = self.pan_y + map_height_on_screen / 2
+            
+            # Применяем ротацию если она не нулевая
+            if abs(self.rotation) > 0.1:
+                PushMatrix()
+                Translate(center_x, center_y)
+                Rotate(angle=self.rotation, origin=(0, 0))
+                Translate(-center_x, -center_y)
+            
+            # PNG фоновое изображение
+            t_bg = time.perf_counter()
+            if self.background_enabled and self.background_image_path:
+                Color(1, 1, 1, self.background_opacity)
+                try:
+                    if self.svg_width and self.svg_height:
+                        bg_width = self.svg_width * self.zoom
+                        bg_height = self.svg_height * self.zoom
+                        bg_pos_x = self.pan_x
+                        bg_pos_y = self.pan_y
+                        Rectangle(
+                            source=self.background_image_path,
+                            pos=(bg_pos_x, bg_pos_y),
+                            size=(bg_width, bg_height)
+                        )
+                except Exception as e:
+                    logger.warning(f"Error rendering background: {e}")
+            t_bg_end = time.perf_counter()
+            
+            # Закрытые маршруты (красные линии)
+            t_closed = time.perf_counter()
+            if self.closed_routes:
+                Color(*self.closed_color)
+                for route in self.closed_routes:
+                    if route.nodes and len(route.nodes) > 1:
+                        points = []
+                        for node_id in route.nodes:
+                            node = next((n for n in self.nodes if n.id == node_id), None)
+                            if node:
+                                x = node.x * self.zoom + self.pan_x
+                                y = node.y * self.zoom + self.pan_y
+                                points.extend([x, y])
+                        if points:
+                            Line(points=points, width=self.edge_width * 2)
+            t_closed_end = time.perf_counter()
+            
+            # Маршрут (зелёные линии)
+            t_route = time.perf_counter()
+            if self.route_nodes and len(self.route_nodes) > 1:
+                Color(*self.route_color)
+                points = []
+                for node_id in self.route_nodes:
+                    node = next((n for n in self.nodes if n.id == node_id), None)
+                    if node:
+                        x = node.x * self.zoom + self.pan_x
+                        y = node.y * self.zoom + self.pan_y
+                        points.extend([x, y])
+                if points:
+                    Line(points=points, width=self.edge_width * 3)
+            t_route_end = time.perf_counter()
+            
+            # Рёбра графа (серые линии)
+            t_edges = time.perf_counter()
+            if self.edges and self.nodes:
+                Color(*self.edge_color)
+                for node_id1, node_id2 in self.edges:
+                    node1 = next((n for n in self.nodes if n.id == node_id1), None)
+                    node2 = next((n for n in self.nodes if n.id == node_id2), None)
+                    if node1 and node2:
+                        x1 = node1.x * self.zoom + self.pan_x
+                        y1 = node1.y * self.zoom + self.pan_y
+                        x2 = node2.x * self.zoom + self.pan_x
+                        y2 = node2.y * self.zoom + self.pan_y
+                        Line(points=[x1, y1, x2, y2], width=self.edge_width)
+            t_edges_end = time.perf_counter()
+            
+            # Узлы (синие круги)
+            t_nodes = time.perf_counter()
+            if self.nodes:
+                Color(*self.node_color)
+                for node in self.nodes:
+                    x = node.x * self.zoom + self.pan_x
+                    y = node.y * self.zoom + self.pan_y
+                    Ellipse(pos=(x - self.node_radius, y - self.node_radius),
+                            size=(self.node_radius * 2, self.node_radius * 2))
+            t_nodes_end = time.perf_counter()
+            
+            # Отключаем ротацию после отрисовки
+            if abs(self.rotation) > 0.1:
+                PopMatrix()
+            
+            # Логирование производительности
+            t_total = (t_bg_end - t_bg) + (t_closed_end - t_closed) + (t_route_end - t_route) + \
+                      (t_edges_end - t_edges) + (t_nodes_end - t_nodes)
+            if t_total > 0.01:  # Логируем только если > 10ms
+                logger.debug(f"[[PROFILE] PNG] BG: {(t_bg_end - t_bg)*1000:.1f}ms | " +
+                            f"Edges: {(t_edges_end - t_edges)*1000:.1f}ms | " +
+                            f"Closed: {(t_closed_end - t_closed)*1000:.1f}ms | " +
+                            f"Route: {(t_route_end - t_route)*1000:.1f}ms | " +
+                            f"Nodes: {(t_nodes_end - t_nodes)*1000:.1f}ms | " +
+                            f"TOTAL: {t_total*1000:.1f}ms")

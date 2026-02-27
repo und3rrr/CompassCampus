@@ -5,12 +5,14 @@ from kivy.app import App
 from kivy.uix.screenmanager import ScreenManager, FadeTransition
 from kivy.core.window import Window
 from kivy.logger import Logger
+from kivy.clock import Clock
 from screens.login_screen import LoginScreen
 from screens.home_screen import HomeScreen
 from screens.map_screen import MapScreen
 from screens.qr_scanner_screen import QRScannerScreen
 from screens.admin_screen import AdminScreen
 from screens.history_screen import HistoryScreen
+from screens.graph_editor_screen import GraphEditorScreen
 from services.api_client import init_api_client
 from services.cache_service import init_cache_service
 from services.auth_service import AuthenticationService
@@ -22,9 +24,9 @@ import os
 # Настройка размера окна для Android
 Window.size = (480, 800)
 
-# Настройка логирования
+# Настройка логирования (временно ставим DEBUG для детальной диагностики старта)
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -37,12 +39,17 @@ class CampusCompassApp(App):
         """Построить основной UI приложения"""
         logger.info("Starting CampusCompass Mobile Application")
 
-        # Инициализируем сервисы
+        import time
+        start_time = time.time()
+
+        # Инициализируем сервисы (защищённо)
         api_url = os.getenv('API_URL', 'http://localhost:8000/api/v1')
         cache_dir = os.path.join(self.user_data_dir, '.cache')
-
-        init_api_client(base_url=api_url)
-        init_cache_service(cache_dir=cache_dir)
+        try:
+            init_api_client(base_url=api_url)
+            init_cache_service(cache_dir=cache_dir)
+        except Exception as e:
+            logger.exception(f"Error initializing services: {e}")
 
         # Инициализируем сервисы аутентификации и QR кодов
         auth_service = AuthenticationService(
@@ -67,30 +74,54 @@ class CampusCompassApp(App):
         screen_manager = ScreenManager(transition=FadeTransition())
 
         # Добавляем скрины
+        logger.info("[build] Adding LoginScreen...")
         login_screen = LoginScreen(auth_service, name='login')
+        screen_manager.add_widget(login_screen)
+        
+        logger.info("[build] Adding HomeScreen...")
         home_screen = HomeScreen(name='home')
+        screen_manager.add_widget(home_screen)
+        
+        logger.info("[build] Adding MapScreen...")
         map_screen = MapScreen(name='map')
         map_screen.closure_service = closure_service  # Устанавливаем сервис закрытий
+        screen_manager.add_widget(map_screen)
+        
+        logger.info("[build] Adding QRScannerScreen...")
         qr_scanner_screen = QRScannerScreen(qr_service=qr_service, name='qr_scanner')
+        screen_manager.add_widget(qr_scanner_screen)
+        
+        logger.info("[build] Adding AdminScreen...")
         admin_screen = AdminScreen(auth_service=auth_service, qr_service=qr_service, 
                                    closure_service=closure_service, name='admin')
-        history_screen = HistoryScreen(auth_service=auth_service, name='history')
-
-        screen_manager.add_widget(login_screen)
-        screen_manager.add_widget(home_screen)
-        screen_manager.add_widget(map_screen)
-        screen_manager.add_widget(qr_scanner_screen)
         screen_manager.add_widget(admin_screen)
+        
+        logger.info("[build] Adding HistoryScreen...")
+        history_screen = HistoryScreen(auth_service=auth_service, name='history')
         screen_manager.add_widget(history_screen)
+        
+        logger.info("[build] Adding GraphEditorScreen...")
+        graph_editor_screen = GraphEditorScreen(name='graph_editor')
+        screen_manager.add_widget(graph_editor_screen)
+        
+        logger.info("[build] All screens added")
 
-        # Устанавливаем начальный скрин
-        # Если есть сохранённый пользователь, переходим на home, иначе на login
-        if auth_service.current_user:
-            screen_manager.current = 'home'
-        else:
-            screen_manager.current = 'login'
+        # Устанавливаем начальный скрин - сразу открываем карту
+        screen_manager.current = 'map'
 
-        logger.info("Application initialized successfully")
+        elapsed = (time.time() - start_time) * 1000
+        logger.info(f"Application initialized successfully in {elapsed:.0f}ms")
+
+        # Heartbeat logger helps detect UI thread freezes (prints every second)
+        self._heartbeat_count = 0
+        def _heartbeat(dt):
+            try:
+                self._heartbeat_count += 1
+                # Выключаем heartbeat в production логировании
+                # logger.debug(f"[HEARTBEAT] UI alive #{self._heartbeat_count} current_screen={screen_manager.current}")
+            except Exception:
+                logger.exception("Heartbeat failed")
+        Clock.schedule_interval(_heartbeat, 1.0)
 
         return screen_manager
 

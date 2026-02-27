@@ -46,18 +46,23 @@ class Building:
     address: str
     nodes: List[Node]
     floors: int
+    edges: List[tuple] = None
+
+    def __post_init__(self):
+        if self.edges is None:
+            self.edges = []
 
 
 class APIClient:
     """Клиент для работы с REST API"""
 
-    def __init__(self, base_url: str = "http://localhost:8000/api/v1", timeout: int = 10):
+    def __init__(self, base_url: str = "http://localhost:8000/api/v1", timeout: int = 5):
         """
         Инициализация API клиента
 
         Args:
             base_url: URL базового сервера API
-            timeout: Timeout для запросов в секундах
+            timeout: Timeout для запросов в секундах (5 сек по умолчанию для быстрого fallback)
         """
         self.base_url = base_url
         self.timeout = timeout
@@ -279,9 +284,9 @@ class APIClient:
         # Возвращаем одно здание со всеми узлами
         building = Building(
             id="building_main",
-            name="Главный корпус",
-            address="ул. Ломоносова, 27",
-            floors=floors,
+            name="Нижний корпус\nЧелюскинцев 19к2",
+            address="",
+            floors=6,
             nodes=all_nodes
         )
         
@@ -326,6 +331,53 @@ class APIClient:
         except Exception as e:
             logger.error(f"Failed to get building {building_id}: {e}")
             raise
+
+    def update_building(self, building: Building) -> bool:
+        """
+        Обновить данные здания на сервере
+
+        Args:
+            building: Объект Building с обновленными данными
+
+        Returns:
+            True если успешно, False иначе
+        """
+        endpoint = f"{self.base_url}/buildings/{building.id}"
+        
+        try:
+            # Подготовляем данные для отправки
+            building_data = {
+                "id": building.id,
+                "name": building.name,
+                "address": building.address,
+                "floors": building.floors,
+                "nodes": [
+                    {
+                        "id": node.id,
+                        "name": node.name,
+                        "x": node.x,
+                        "y": node.y,
+                        "floor": node.floor,
+                        "type": node.node_type
+                    }
+                    for node in building.nodes
+                ],
+                "edges": [
+                    {"from": edge[0], "to": edge[1]} if isinstance(edge, (tuple, list)) else edge
+                    for edge in building.edges
+                ]
+            }
+            
+            response = self.session.put(endpoint, json=building_data, timeout=self.timeout)
+            if response.status_code in [200, 201]:
+                logger.info(f"Building {building.id} updated successfully")
+                return True
+            else:
+                logger.warning(f"Failed to update building {building.id}: {response.status_code}")
+                return False
+        except Exception as e:
+            logger.warning(f"Could not update building to API: {e}")
+            return False
 
     # ============== SEARCH ENDPOINTS ==============
 

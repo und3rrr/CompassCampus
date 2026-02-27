@@ -145,7 +145,7 @@ class HomeScreen(Screen):
 
         for building in self.buildings:
             btn = Button(
-                text=f'[b]{building.name}[/b]\n{building.address}\nЭтажей: {building.floors}',
+                text=f'[b]{building.name}[/b]\nЭтажей: {building.floors}',
                 markup=True,
                 size_hint_y=None,
                 height=dp(80),
@@ -161,7 +161,22 @@ class HomeScreen(Screen):
         logger.info(f"Selected building: {building.name}")
 
         # Переходим на экран карты
-        self.manager.get_screen('map').set_building(building)
+        map_screen = self.manager.get_screen('map')
+        map_screen.set_building(building)
+        
+        # Также устанавливаем здание для редактора графов
+        graph_editor_screen = self.manager.get_screen('graph_editor')
+        graph_editor_screen.set_building(building)
+        
+        # И для админ панели
+        admin_screen = self.manager.get_screen('admin')
+        admin_screen.set_building(building)
+        
+        # Отложим переключение экрана на следующий фрейм чтобы не блокировать UI
+        Clock.schedule_once(lambda dt: self._switch_to_map(), 0)
+    
+    def _switch_to_map(self):
+        """Переключиться на экран карты в главном потоке"""
         self.manager.current = 'map'
 
     def on_refresh(self, instance):

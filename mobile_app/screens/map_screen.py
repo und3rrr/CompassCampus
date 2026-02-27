@@ -1,8 +1,10 @@
 """
-Экран карты с навигацией
+Экран карты с навигацией с поддержкой SVG/PNG планов этажей
+Версия 3.0 - Переработанный интерфейс, Modern Bottom Sheet, загрузка последнего корпуса
 """
 from kivy.uix.screenmanager import Screen
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -13,19 +15,25 @@ from kivy.uix.scrollview import ScrollView
 from kivy.metrics import dp
 from kivy.core.window import Window
 from kivy.clock import Clock
+from kivy.graphics import Color, RoundedRectangle
 from widgets.map_widget import MapWidget
+from widgets.bottom_popup import BottomPopup
+from widgets.modern_bottom_sheet import ModernBottomSheet
 from services.api_client import get_api_client, Building, Node, Route
 from services.cache_service import get_cache_service
 from services.route_closure_service import RouteClosureService
-from services.graph_builder import GraphBuilder
+from services.floor_plan_manager import FloorPlanManager
+from services.graph_builder import GraphBuilder, GraphEdge
 import logging
 import threading
+import os
+import time
 
 logger = logging.getLogger(__name__)
 
 
 class MapScreen(Screen):
-    """Экран карты с навигацией"""
+    """Экран карты с навигацией - версия 3.0"""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -35,142 +43,412 @@ class MapScreen(Screen):
         self.current_route: Route = None
         self.start_node: Node = None
         self.end_node: Node = None
+        
         # Сервис закрытых маршрутов будет установлен позже
         self.closure_service = None
+        
+        # Менеджер планов этажей
+        self.floor_plan_manager = FloorPlanManager(
+            plans_folder=os.path.join(os.path.dirname(__file__), '../assets/floor_plans')
+        )
+        self.current_floor = 1
+        self._initialized_on_enter = False  # Флаг для отложенной инициализации
+        self.buildings_list = []  # Список загруженных корпусов
+        self.building_names_map = {}  # Маппинг имя -> id для корпусов
 
-        # Основной лейаут
-        main_layout = BoxLayout(orientation='vertical', padding=dp(5), spacing=dp(5))
-
-        # Верхняя панель с управлением
-        top_panel = BoxLayout(orientation='vertical', size_hint_y=0.2, spacing=dp(5))
-
-        # Строка выбора этажа
-        floor_layout = BoxLayout(size_hint_y=0.5, spacing=dp(5))
-        floor_label = Label(text='Этаж:', size_hint_x=0.3)
+        # === ОСНОВНОЙ ЛЕЙАУТ - БЕЗ FloatLayout ===
+        main_layout = BoxLayout(orientation='vertical', padding=dp(0), spacing=dp(0))
+        
+        # === ВЕРХНЯЯ ПАНЕЛЬ (современный дизайн) ===
+        header = BoxLayout(
+            orientation='vertical',
+            size_hint=(1, None),
+            height=dp(90),
+            padding=dp(10),
+            spacing=dp(8)
+        )
+        
+        # Фон заголовка (светло-синий цвет)
+        with header.canvas.before:
+            Color(0.95, 0.97, 1.0, 1.0)  # Очень светло-синий
+            RoundedRectangle(size=header.size, pos=header.pos, radius=[0, 0, dp(15), dp(15)])
+        header.bind(size=self._update_header_bg, pos=self._update_header_bg)
+        
+        # Название экрана и выбор этажа на одной строке
+        top_row = BoxLayout(size_hint=(1, None), height=dp(35), spacing=dp(10))
+        
+        # СПИННЕР ВЫБОРА КОРПУСА (слева)
+        building_layout = BoxLayout(size_hint_x=0.35, spacing=dp(5))
+        building_label = Label(
+            text='Корпус:',
+            size_hint_x=0.3,
+            font_size='12sp',
+            color=(0.3, 0.3, 0.3, 1.0)
+        )
+        building_layout.add_widget(building_label)
+        
+        self.building_spinner = Spinner(
+            text='Выбрать',
+            values=(),  # Will be populated in on_enter
+            size_hint_x=0.7,
+            background_color=(0.2, 0.6, 0.3, 1.0),
+            color=(1, 1, 1, 1.0)
+        )
+        # Привязка будет добавлена в on_enter()
+        building_layout.add_widget(self.building_spinner)
+        top_row.add_widget(building_layout)
+        
+        title = Label(
+            text='Карта корпуса',
+            size_hint_x=0.3,
+            font_size='18sp',
+            bold=True,
+            color=(0.1, 0.1, 0.1, 1.0)
+        )
+        top_row.add_widget(title)
+        
+        # Спиннер этажа (современный стиль)
+        floor_layout = BoxLayout(size_hint_x=0.35, spacing=dp(5))
+        floor_label = Label(
+            text='Этаж:',
+            size_hint_x=0.4,
+            font_size='12sp',
+            color=(0.3, 0.3, 0.3, 1.0)
+        )
         floor_layout.add_widget(floor_label)
+        
         self.floor_spinner = Spinner(
             text='1',
-            values=('1', '2', '3', '4', '5'),
-            size_hint_x=0.7
+            values=('-1', '1', '2', '3'),
+            size_hint_x=0.6,
+            background_color=(0.2, 0.4, 0.9, 1.0),
+            color=(1, 1, 1, 1.0)
         )
         self.floor_spinner.bind(text=self.on_floor_changed)
         floor_layout.add_widget(self.floor_spinner)
-        top_panel.add_widget(floor_layout)
-
-        # Строка поиска
-        search_layout = BoxLayout(size_hint_y=0.5, spacing=dp(5))
+        top_row.add_widget(floor_layout)
+        
+        header.add_widget(top_row)
+        
+        # Поле поиска
+        search_layout = BoxLayout(size_hint=(1, None), height=dp(40), spacing=dp(8))
+        
         self.search_input = TextInput(
             hint_text='Поиск помещения...',
             multiline=False,
-            size_hint_x=0.7
+            size_hint_x=0.85,
+            background_color=(1, 1, 1, 1.0),
+            foreground_color=(0.1, 0.1, 0.1, 1.0),
+            padding=dp(8),
+            font_size='13sp'
         )
         search_layout.add_widget(self.search_input)
-
-        search_btn = Button(text='🔍', size_hint_x=0.3)
+        
+        search_btn = Button(
+            text='Поиск',
+            size_hint_x=0.15,
+            background_color=(0.2, 0.8, 0.3, 1.0),
+            font_size='16sp'
+        )
         search_btn.bind(on_press=self.on_search)
         search_layout.add_widget(search_btn)
-        top_panel.add_widget(search_layout)
-
-        # Список результатов поиска (dropdown под поиском)
+        
+        header.add_widget(search_layout)
+        main_layout.add_widget(header)
+        
+        # === РЕЗУЛЬТАТЫ ПОИСКА (dropdown) ===
         self.search_results_container = BoxLayout(
             orientation='vertical',
-            size_hint_y=None,
-            height=0,  # Скрыт по умолчанию
-            spacing=dp(2)
+            size_hint=(1, None),
+            height=0,
+            spacing=dp(2),
+            padding=dp(5)
         )
-        top_panel.add_widget(self.search_results_container)
-
-        main_layout.add_widget(top_panel)
-
-        # Карта в центре
-        self.map_widget = MapWidget(size_hint_y=0.6)
-        main_layout.add_widget(self.map_widget)
-
-        # Панель маршрута (нижняя)
-        self.route_panel = BoxLayout(orientation='vertical', size_hint_y=0.2, spacing=dp(5))
-        self.route_panel.padding = dp(5)
-        self.route_info_label = Label(
-            text='Нажмите на две точки для построения маршрута',
-            size_hint_y=0.5
-        )
-        self.route_panel.add_widget(self.route_info_label)
-
-        # Кнопки внизу
-        button_layout = GridLayout(cols=5, size_hint_y=0.5, spacing=dp(5))
-
-        reset_btn = Button(text='Сброс')
-        reset_btn.bind(on_press=self.on_reset_view)
-        button_layout.add_widget(reset_btn)
-
-        zoom_in_btn = Button(text='Зум+')
-        zoom_in_btn.bind(on_press=self.on_zoom_in)
-        button_layout.add_widget(zoom_in_btn)
-
-        zoom_out_btn = Button(text='Зум-')
-        zoom_out_btn.bind(on_press=self.on_zoom_out)
-        button_layout.add_widget(zoom_out_btn)
-
-        cancel_btn = Button(text='Отмена')
-        cancel_btn.bind(on_press=self.on_cancel_selection)
-        button_layout.add_widget(cancel_btn)
-
-        back_btn = Button(text='Назад')
-        back_btn.bind(on_press=self.on_back)
-        button_layout.add_widget(back_btn)
-
-        self.route_panel.add_widget(button_layout)
-        main_layout.add_widget(self.route_panel)
-
-        self.add_widget(main_layout)
-    def set_building(self, building: Building):
-        """Установить активное здание"""
-        self.building = building
-        self.start_node = None
-        self.end_node = None
-        self.current_route = None
+        main_layout.add_widget(self.search_results_container)
         
-        # Установить callback для выбора узлов на карте
-        self.map_widget.on_node_selected_callback = self.on_map_node_selected
+        # === КАРТА ===
+        self.map_widget = MapWidget(size_hint=(1, 1))
+        main_layout.add_widget(self.map_widget)
+        
+        # === БЛОК УПРАВЛЕНИЯ (нижний) ===
+        control_panel = BoxLayout(
+            orientation='horizontal',
+            size_hint=(1, None),
+            height=dp(50),
+            padding=dp(8),
+            spacing=dp(8)
+        )
+        
+        # Фон управления
+        with control_panel.canvas.before:
+            Color(0.95, 0.95, 0.95, 1.0)
+            RoundedRectangle(size=control_panel.size, pos=control_panel.pos, radius=[dp(15), dp(15), 0, 0])
+        control_panel.bind(size=self._update_control_bg, pos=self._update_control_bg)
+        
+        reset_btn = self._create_control_btn('Сброс', self.on_reset_view)
+        control_panel.add_widget(reset_btn)
+        
+        zoom_in_btn = self._create_control_btn('Увеличить', self.on_zoom_in)
+        control_panel.add_widget(zoom_in_btn)
+        
+        zoom_out_btn = self._create_control_btn('Уменьшить', self.on_zoom_out)
+        control_panel.add_widget(zoom_out_btn)
+        
+        cancel_btn = self._create_control_btn('Отмена', self.on_cancel_selection)
+        control_panel.add_widget(cancel_btn)
+        
+        back_btn = self._create_control_btn('Выход', self.on_back)
+        control_panel.add_widget(back_btn)
+        
+        main_layout.add_widget(control_panel)
+        
+        self.main_layout = main_layout
+        self.add_widget(main_layout)
+        
+        # Загружаем последний выбранный корпус при старте
+        self._load_last_building()
 
-        # Обновляем спиннер этажей
-        if building.floors:
-            self.floor_spinner.values = [str(i) for i in range(1, building.floors + 1)]
+    def _update_header_bg(self, instance, value):
+        """Обновить фон заголовка при изменении размера"""
+        if hasattr(instance, 'canvas'):
+            instance.canvas.before.clear()
+            with instance.canvas.before:
+                Color(0.95, 0.97, 1.0, 1.0)
+                RoundedRectangle(size=instance.size, pos=instance.pos, radius=[0, 0, dp(15), dp(15)])
+
+    def _update_control_bg(self, instance, value):
+        """Обновить фон управления при изменении размера"""
+        if hasattr(instance, 'canvas'):
+            instance.canvas.before.clear()
+            with instance.canvas.before:
+                Color(0.95, 0.95, 0.95, 1.0)
+                RoundedRectangle(size=instance.size, pos=instance.pos, radius=[dp(15), dp(15), 0, 0])
+
+    def _create_control_btn(self, text: str, callback):
+        """Создать кнопку управления с современным стилем"""
+        btn = Button(
+            text=text,
+            background_color=(0.2, 0.4, 0.9, 1.0),
+            color=(1, 1, 1, 1.0),
+            font_size='13sp',
+            bold=True,
+            size_hint_x=0.2
+        )
+        btn.bind(on_press=callback)
+        return btn
+    
+    def _load_last_building(self):
+        """Загрузить последний выбранный корпус из кэша"""
+        try:
+            # Получаем ID последнего здания из кэша
+            last_building_id = self.cache_service.get('last_building_id')
+            
+            thread = threading.Thread(
+                target=self._fetch_last_building,
+                args=(last_building_id,)
+            )
+            thread.daemon = True
+            thread.start()
+        except Exception as e:
+            logger.warning(f"Could not load last building: {e}")
+            # Загружаем первое здание как fallback
+            self._load_building_data()
+
+    def _fetch_last_building(self, last_building_id):
+        """Получить последний выбранный корпус"""
+        try:
+            if last_building_id:
+                # Пытаемся найти здание с сохранённым ID
+                buildings = self.api_client.get_buildings()
+                for building in buildings:
+                    if building.id == last_building_id:
+                        self.building = building
+                        logger.info(f"Loaded last building: {building.id}")
+                        Clock.schedule_once(lambda dt: self._load_building_data(), 0)
+                        return
+            
+            # Если не найдено, загружаем первое здание
+            logger.warning("Last building not found, loading first building")
+            self._load_building_data()
+        except Exception as e:
+            logger.error(f"Failed to load last building: {e}")
+            self._load_building_data()
+
+    def _load_buildings_list(self):
+        """Загрузить список всех доступных корпусов"""
+        try:
+            buildings = self.api_client.get_buildings()
+            self.buildings_list = buildings
+            
+            # Создаём маппинг имя -> id
+            self.building_names_map = {b.name: b.id for b in buildings}
+            
+            # Обновляем спиннер
+            building_names = [b.name for b in buildings]
+            logger.info(f"[MapScreen] Loaded {len(buildings)} buildings: {building_names}")
+            
+            Clock.schedule_once(
+                lambda dt: self._update_building_spinner(building_names), 0
+            )
+        except Exception as e:
+            logger.error(f"Failed to load buildings list: {e}")
+
+    def _update_building_spinner(self, building_names):
+        """Обновить спиннер выбора корпуса"""
+        if building_names:
+            self.building_spinner.values = tuple(building_names)
+            if self.building:
+                # Устанавливаем текущий корпус в спиннер
+                self.building_spinner.text = self.building.name
+            else:
+                self.building_spinner.text = building_names[0]
+
+    def _fetch_last_building(self, last_building_id):
+        """Получить последний выбранный корпус"""
+        try:
+            if last_building_id:
+                # Пытаемся найти здание с сохранённым ID
+                buildings = self.api_client.get_buildings()
+                for building in buildings:
+                    if building.id == last_building_id:
+                        self.building = building
+                        logger.info(f"Loaded last building: {building.id}")
+                        Clock.schedule_once(lambda dt: self._load_building_data(), 0)
+                        return
+            
+            # Если не найдено, загружаем первое здание
+            logger.warning("Last building not found, loading first building")
+            self._load_building_data()
+        except Exception as e:
+            logger.error(f"Failed to load last building: {e}")
+            self._load_building_data()
+
+    def set_building(self, building: Building):
+        """Установить активное здание и сохранить в кэше"""
+        logger.info(f"[MapScreen.set_building] Called with building: {building.name}")
+        self.building = building
+        
+        # Сохраняем ID выбранного здания
+        try:
+            self.cache_service.set('last_building_id', building.id)
+            logger.info(f"[MapScreen.set_building] Saved last building ID: {building.id}")
+        except Exception as e:
+            logger.warning(f"[MapScreen.set_building] Could not save last building ID: {e}")
+        
+        if self.building:
+            logger.info("[MapScreen.set_building] Updating floor spinner...")
+            # Обновляем спиннер этажей с поддержкой -1
+            floors = []
+            if any(n.floor == -1 for n in self.building.nodes):
+                floors.append('-1')
+            floors.extend([str(i) for i in range(1, self.building.floors + 1)])
+            self.floor_spinner.values = floors
             self.floor_spinner.text = '1'
-
-        # Загружаем данные здания
-        self._load_building_data()
+            
+            # Загружаем данные здания
+            logger.info("[MapScreen.set_building] Calling _load_building_data()...")
+            self._load_building_data()
+            logger.info("[MapScreen.set_building] Done!")
 
     def _load_building_data(self):
         """Загрузить данные здания"""
+        logger.info("[MapScreen._load_building_data] Starting background thread...")
         thread = threading.Thread(target=self._fetch_building_data)
         thread.daemon = True
         thread.start()
+        logger.info("[MapScreen._load_building_data] Thread started, returning...")
 
     def _fetch_building_data(self):
         """Получить данные здания с API"""
+        logger.info("[MapScreen._fetch_building_data] Starting...")
         try:
-            logger.info(f"Loading building data: {self.building.id}")
-            # Данные уже есть в building объекте
+            # Если building ещё не установлено, загружаем первое здание
+            if not self.building:
+                logger.info("[MapScreen._fetch_building_data] Building not set, fetching from API...")
+                buildings = self.api_client.get_buildings()
+                if buildings:
+                    self.building = buildings[0]
+                    logger.info(f"[MapScreen._fetch_building_data] Loaded building: {self.building.id}")
+                else:
+                    logger.warning("[MapScreen._fetch_building_data] No buildings available")
+                    return
+            else:
+                logger.info(f"[MapScreen._fetch_building_data] Building already set: {self.building.id}")
+            
+            # 🔍 ОТЛАДКА: логируем состояние графа
+            if self.building:
+                logger.info(f"[MapScreen._fetch_building_data] Building graph state: {len(self.building.nodes)} nodes, {len(self.building.edges) if self.building.edges else 0} edges")
+            
             # Обновляем UI в главном потоке через Clock
+            logger.info("[MapScreen._fetch_building_data] Scheduling UI update...")
             Clock.schedule_once(lambda dt: self._update_map_display(), 0)
+            
+            # Также устанавливаем callback для выбора узлов
+            logger.info("[MapScreen._fetch_building_data] Scheduling callback setup...")
+            Clock.schedule_once(lambda dt: self._setup_map_callbacks(), 0)
+            logger.info("[MapScreen._fetch_building_data] Done!")
         except Exception as e:
-            logger.error(f"Failed to load building data: {e}")
+            logger.error(f"[MapScreen._fetch_building_data] Failed to load building data: {e}")
             error_message = f"Ошибка загрузки: {str(e)}"
             Clock.schedule_once(lambda dt, msg=error_message: self._show_error_popup(msg), 0)
 
+    def _setup_map_callbacks(self):
+        """Установить обработчики событий карты"""
+        logger.info("[MapScreen._setup_map_callbacks] Starting...")
+        # Установить callback для выбора узлов на карте
+        self.map_widget.on_node_selected_callback = self.on_map_node_selected
+        
+        # Обновляем спиннер этажей если здание загружено
+        if self.building and self.building.floors:
+            logger.info("[MapScreen._setup_map_callbacks] Updating floor spinner...")
+            # Добавляем все доступные этажи, включая -1 (подвал)
+            floors = []
+            if any(n.floor == -1 for n in self.building.nodes):
+                floors.append('-1')
+            floors.extend([str(i) for i in range(1, self.building.floors + 1)])
+            self.floor_spinner.values = floors
+            self.floor_spinner.text = '1'
+        logger.info("[MapScreen._setup_map_callbacks] Done!")
+
     def _update_map_display(self):
         """Обновить отображение карты"""
+        logger.info("[MapScreen._update_map_display] Starting...")
         if self.building and self.building.nodes:
+            logger.info("[MapScreen._update_map_display] Building has nodes, filtering by floor...")
             # Фильтруем узлы по текущему этажу
             current_floor = int(self.floor_spinner.text)
+            self.current_floor = current_floor
             floor_nodes = [n for n in self.building.nodes if n.floor == current_floor]
+            logger.info(f"[MapScreen._update_map_display] Found {len(floor_nodes)} nodes on floor {current_floor}")
 
+            logger.info("[MapScreen._update_map_display] Calling map_widget.set_nodes()...")
             self.map_widget.set_nodes(floor_nodes)
+            
+            # ========== ЗАГРУЗКА ПЛАНА ЭТАЖА (SVG/PNG) ==========
+            # Проверяем наличие плана этажа и загружаем его как фон
+            logger.info("[MapScreen._update_map_display] Loading floor plan...")
+            plan_file = self.floor_plan_manager.get_plan_file(current_floor)
+            if plan_file and os.path.exists(plan_file):
+                try:
+                    # Для всех файлов используем set_background_image
+                    # которая автоматически конвертирует SVG → PNG если нужно
+                    logger.info(f"[MapScreen._update_map_display] Setting background image: {plan_file}")
+                    self.map_widget.set_background_image(plan_file)
+                    logger.info(f"[MapScreen._update_map_display] Loaded floor plan for floor {current_floor}: {plan_file}")
+                except Exception as e:
+                    logger.warning(f"[MapScreen._update_map_display] Could not load floor plan for floor {current_floor}: {e}")
+                    self.map_widget.set_background_image(None)
+            else:
+                # Если плана нет, очищаем фон
+                logger.info("[MapScreen._update_map_display] No floor plan found, clearing background...")
+                self.map_widget.set_background_image(None)
             
             # Добавляем edges - связи между узлами
             if not self.building.nodes:
+                logger.info("[MapScreen._update_map_display] No nodes, returning...")
                 return
                 
+            logger.info("[MapScreen._update_map_display] Building edges from nodes...")
             from services.graph_builder import GraphBuilder
             
             # Конвертируем Node объекты в словари для GraphBuilder
@@ -187,23 +465,112 @@ class MapScreen(Screen):
             ]
             
             # Строим edges
+            logger.info("[MapScreen._update_map_display] Calling GraphBuilder.build_edges_from_nodes()...")
             builder = GraphBuilder()
             edges = builder.build_edges_from_nodes(nodes_dicts)
+            logger.info(f"[MapScreen._update_map_display] Built {len(edges)} total edges")
             
             # Фильтруем edges по текущему этажу
+            logger.info("[MapScreen._update_map_display] Filtering edges by floor...")
             floor_edges = []
             node_ids = {n.id for n in floor_nodes}
             for edge in edges:
                 if edge.from_id in node_ids and edge.to_id in node_ids:
                     floor_edges.append((edge.from_id, edge.to_id))
             
+            logger.info(f"[MapScreen._update_map_display] Setting {len(floor_edges)} floor edges...")
             self.map_widget.set_edges(floor_edges)
 
             # Если есть сервис закрытий, показываем закрытые маршруты
             if self.closure_service:
+                logger.info("[MapScreen._update_map_display] Setting closed routes...")
                 closed_edges = self.closure_service.get_closed_edges()
                 closed_nodes = self.closure_service.get_closed_nodes()
                 self.map_widget.set_closed_routes(closed_edges, closed_nodes)
+            logger.info("[MapScreen._update_map_display] Done!")
+        else:
+            logger.warning("[MapScreen._update_map_display] Building or nodes not available")
+
+    def on_enter(self):
+        """Load last building when screen is opened (deferred from __init__)"""
+        logger.info("[MapScreen.on_enter] Starting...")
+        
+        # Привязываем обработчик клавиатуры для админ меню (Ctrl+A)
+        Window.bind(on_keyboard=self._on_keyboard)
+        
+        # Привязываем обработчик спиннера выбора корпуса (первый вход)
+        try:
+            self.building_spinner.bind(text=self.on_building_changed)
+        except:
+            pass  # Уже привязано
+        
+        # Загружаем список корпусов для спиннера
+        if not self.buildings_list:
+            thread = threading.Thread(target=self._load_buildings_list)
+            thread.daemon = True
+            thread.start()
+        
+        if not self._initialized_on_enter:
+            logger.info("[MapScreen.on_enter] Loading last building")
+            self._load_last_building()
+            self._initialized_on_enter = True
+        else:
+            # При повторном входе на карту (например, после редактора) - перезагружаем данные
+            logger.info("[MapScreen.on_enter] Refreshing building data from cache")
+            if self.building:
+                # Пытаемся перезагрузить здание из кэша
+                try:
+                    cached_building = self.cache_service.load_building(self.building.id)
+                    if cached_building:
+                        self.building = cached_building
+                        logger.info(f"[MapScreen.on_enter] Reloaded building from cache: {len(self.building.nodes)} nodes, {len(self.building.edges)} edges")
+                        # Обновляем отображение карты с новыми данными
+                        Clock.schedule_once(lambda dt: self._update_map_display(), 0)
+                except Exception as e:
+                    logger.warning(f"[MapScreen.on_enter] Failed to reload from cache: {e}")
+        
+        logger.info("[MapScreen.on_enter] Done")
+
+    def on_building_changed(self, spinner, text):
+        """Обработка выбора корпуса"""
+        if text and text != 'Выбрать':
+            building_id = self.building_names_map.get(text)
+            if building_id:
+                self.cache_service.set('last_building_id', building_id)
+                # Загружаем выбранный корпус
+                thread = threading.Thread(
+                    target=self._load_building_by_id,
+                    args=(building_id,)
+                )
+                thread.daemon = True
+                thread.start()
+
+    def _load_building_by_id(self, building_id: str):
+        """Загрузить корпус по ID"""
+        try:
+            building = self.api_client.get_building(building_id)
+            self.building = building
+            logger.info(f"[MapScreen] Loaded building: {building.id} - {building.name}")
+            # Обновляем этажи на основе нового здания
+            Clock.schedule_once(lambda dt: self._update_floor_spinner(), 0)
+            Clock.schedule_once(lambda dt: self._load_building_data(), 0.1)
+        except Exception as e:
+            logger.error(f"[MapScreen] Failed to load building {building_id}: {e}")
+
+    def _update_floor_spinner(self):
+        """Обновить спиннер этажей в соответствии с выбранным корпусом"""
+        if self.building and self.building.floors:
+            floors = []
+            # Для нижнего корпуса: -1, 1, 2, 3
+            # Для остальных: 1, 2, 3, 4, 5
+            if self.building.id.lower() in ['lower', 'нижний']:
+                floors = ['-1', '1', '2', '3']
+            else:
+                floors = ['1', '2', '3', '4', '5'][:self.building.floors]
+            
+            self.floor_spinner.values = tuple(floors)
+            self.floor_spinner.text = floors[0] if floors else '1'
+            self.current_floor = int(self.floor_spinner.text)
 
     def on_floor_changed(self, spinner, text):
         """Обработка изменения этажа"""
@@ -325,18 +692,17 @@ class MapScreen(Screen):
                 # Переходим на нужный этаж
                 self.floor_spinner.text = str(floor)
                 
-                # Показываем информацию о найденном узле
-                self.route_info_label.text = f'Целевое помещение: {node_name}\nЭтаж: {floor}'
-                
                 # Если есть стартовая точка, строим маршрут
                 if self.start_node:
                     self._calculate_route()
+                    logger.info(f"Route from QR: {self.start_node.name} → {node_name}")
                 else:
                     # Выбираем стартовую точку автоматически (первый узел)
                     if self.building.nodes:
                         self.start_node = self.building.nodes[0]
                         self.map_widget.set_start_node(self.start_node)
-                        self.route_info_label.text = f'Старт: {self.start_node.name}\nЦель: {node_name}'
+                        self._calculate_route()
+                        logger.info(f"Route auto-start from QR: {self.start_node.name} → {node_name}")
                         self._calculate_route()
                 
                 logger.info(f"QR: Set end node {node_name} (ID: {node_id})")
@@ -346,17 +712,61 @@ class MapScreen(Screen):
             logger.error(f"Error setting end node from QR: {e}")
 
     def on_map_node_selected(self, node: Node):
-        """Обработка выбора узла на карте"""
-        if self.start_node is None:
-            self.start_node = node
-            self.map_widget.set_start_node(node)
-            self.route_info_label.text = f'Старт: {node.name}\nВыберите конец маршрута (нажмите Отмена чтоб переselect)'
-        elif self.end_node is None:
-            self.end_node = node
-            self.map_widget.set_end_node(node)
-            # Показываем граф при выборе конца
-            self._highlight_graph()
+        """Обработка выбора узла на карте - показываем Modern Bottom Sheet"""
+        sheet = ModernBottomSheet(
+            node=node,
+            on_from_selected=self._set_from_node,
+            on_to_selected=self._set_to_node,
+            size_hint=(1, 0.35),
+            pos_hint={'x': 0, 'y': 0}
+        )
+        self.main_layout.add_widget(sheet)
+        sheet.open()
+
+    def _set_from_node(self, node: Node):
+        """Установить точку ОТСЮДА"""
+        self.start_node = node
+        self.map_widget.set_start_node(node)
+        
+        if self.end_node:
+            status = f'Маршрут: {node.name} → {self.end_node.name}'
+        else:
+            status = f'ОТСЮДА: {node.name}\nВыберите конечную точку «СЮДА»'
+        
+        logger.info(f"Start node set (ОТСЮДА): {node.name}")
+        
+        if self.end_node:
             self._calculate_route()
+
+    def _set_to_node(self, node: Node):
+        """Установить точку СЮДА"""
+        if self.start_node is None:
+            # Если стартовая точка не выбрана, выбираем конец и автоматически старт
+            self.start_node = self.building.nodes[0] if self.building and self.building.nodes else node
+            if self.start_node != node:
+                self.map_widget.set_start_node(self.start_node)
+        
+        self.end_node = node
+        self.map_widget.set_end_node(node)
+        
+        status = f'Маршрут: {self.start_node.name} → {node.name}'
+        
+        # Переходим на нужный этаж
+        if hasattr(node, 'floor'):
+            self.floor_spinner.text = str(node.floor)
+        
+        self._highlight_graph()
+        self._calculate_route()
+        logger.info(f"End node set (СЮДА): {node.name}")
+    
+    # Для совместимости со старыми вызовами
+    def _set_start_node(self, node: Node):
+        """Установить стартовую точку (deprecated, используйте _set_from_node)"""
+        self._set_from_node(node)
+
+    def _set_end_node(self, node: Node):
+        """Установить конечную точку (deprecated, используйте _set_to_node)"""
+        self._set_to_node(node)
 
     def _calculate_route(self):
         """Вычислить маршрут между стартом и концом"""
@@ -368,28 +778,44 @@ class MapScreen(Screen):
         thread.start()
 
     def _fetch_route(self):
-        """Получить маршрут с API или использовать локальный граф"""
+        """Получить маршрут с API или использовать локальный граф
+        
+        Оптимизация: если API не отвечает быстро (2 сек), используем локальный поиск
+        """
+        api_start = time.time()
         try:
             logger.info(f"Calculating route from {self.start_node.id} to {self.end_node.id}")
-            route = self.api_client.get_route(
-                self.building.id,
-                self.start_node.id,
-                self.end_node.id
-            )
-            self.current_route = route
-            self.map_widget.set_route(route)
+            
+            # Временно переопределяем таймаут для этого запроса (2 сек вместо 10)
+            original_timeout = self.api_client.timeout
+            self.api_client.timeout = 2  # 2 сек для быстрого fallback
+            
+            try:
+                route = self.api_client.get_route(
+                    self.building.id,
+                    self.start_node.id,
+                    self.end_node.id
+                )
+                api_time = (time.time() - api_start) * 1000
+                logger.info(f"Route from API: {api_time:.1f}ms")
+                
+                self.current_route = route
+                self.map_widget.set_route(route)
 
-            # Обновляем информацию о маршруте
-            info_text = (
-                f'Маршрут: {self.start_node.name} → {self.end_node.name}\n'
-                f'Расстояние: {route.distance:.0f}м | '
-                f'Время: {route.estimated_time:.0f}мин | '
-                f'Переходов между этажами: {route.floor_changes}'
-            )
-            self.route_info_label.text = info_text
+                # Логируем информацию о маршруте
+                logger.info(
+                    f'✓ Маршрут (API): {self.start_node.name} → {self.end_node.name} | '
+                    f'Расстояние: {route.distance:.0f}м | '
+                    f'Время: {route.estimated_time:.0f}мин | '
+                    f'Переходов: {route.floor_changes}'
+                )
+            finally:
+                # Восстанавливаем оригинальный таймаут
+                self.api_client.timeout = original_timeout
 
         except Exception as e:
-            logger.warning(f"Failed to get route from API: {e}")
+            api_time = (time.time() - api_start) * 1000
+            logger.warning(f"Failed to get route from API ({api_time:.1f}ms): {e}")
             logger.info("Falling back to local graph-based pathfinding...")
             self._calculate_route_locally()
 
@@ -400,7 +826,11 @@ class MapScreen(Screen):
                 Clock.schedule_once(lambda dt: self._show_error_popup("Ошибка: нет данных о здании"), 0)
                 return
             
-            # Конвертируем Node объекты в словари для графа
+            # ПРОФИЛИРОВАНИЕ: общее время
+            total_start = time.time()
+            
+            # ПРОФИЛИРОВАНИЕ: конвертация
+            convert_start = time.time()
             nodes_dicts = []
             nodes_map = {}
             for node in self.building.nodes:
@@ -414,19 +844,65 @@ class MapScreen(Screen):
                 }
                 nodes_dicts.append(node_dict)
                 nodes_map[str(node.id)] = node
+            convert_time = (time.time() - convert_start) * 1000
             
-            # Строим граф
-            edges = GraphBuilder.build_edges_from_nodes(nodes_dicts)
+            # ПРОФИЛИРОВАНИЕ: построение граф
+            graph_start = time.time()
+            
+            # 🔑 ВАЖНО: использовать сохранённые рёбра из редактора вместо автогенерирования!
+            if self.building.edges:
+                # Пользуемся рёбрами из редактора (которые сохранены)
+                edge_objects = []
+                for from_id, to_id in self.building.edges:
+                    from_node = nodes_map.get(str(from_id))
+                    to_node = nodes_map.get(str(to_id))
+                    
+                    if from_node and to_node:
+                        distance = GraphBuilder.calculate_distance(
+                            from_node.x, from_node.y,
+                            to_node.x, to_node.y
+                        )
+                        edge_objects.append(GraphEdge(
+                            from_id=str(from_id),
+                            to_id=str(to_id),
+                            weight=distance
+                        ))
+                
+                edges = edge_objects
+                logger.info(f"✓ Using {len(edges)} edges from building graph (editor)")
+            else:
+                # Fallback: если нет рёбер, использовать автогенерирование (но это плохой вариант)
+                edges = GraphBuilder.build_edges_from_nodes(nodes_dicts)
+                logger.warning(f"⚠️ No edges from building graph, using auto-generated {len(edges)} edges (may be incorrect!)")
+            
+            graph_time = (time.time() - graph_start) * 1000
             
             # Находим кратчайший путь
             # Создаём словарь с ID в виде строк для совместимости
             nodes_dict_for_search = {str(nd['Id']): nd for nd in nodes_dicts}
             
+            # ПРОФИЛИРОВАНИЕ: поиск маршрута
+            search_start = time.time()
             path_result = GraphBuilder.find_shortest_path(
                 str(self.start_node.id),
                 str(self.end_node.id),
                 edges,
                 nodes_dict_for_search
+            )
+            search_time = (time.time() - search_start) * 1000
+            
+            total_time = (time.time() - total_start) * 1000
+            cache_size = GraphBuilder.get_cache_size()
+            
+            # Логируем детальное профилирование
+            logger.info(
+                f"Route calculation breakdown: "
+                f"Convert={convert_time:.2f}ms | "
+                f"BuildGraph={graph_time:.2f}ms | "
+                f"Dijkstra={search_time:.2f}ms | "
+                f"Total={total_time:.2f}ms | "
+                f"RouteCacheSize={cache_size} | "
+                f"GraphCacheSize={GraphBuilder.get_graph_cache_size()}"
             )
             
             if path_result:
@@ -453,14 +929,16 @@ class MapScreen(Screen):
                     self.current_route = route
                     self.map_widget.set_route(route)
                     
-                    # Обновляем информацию о маршруте
-                    info_text = (
-                        f'Маршрут (локальный): {self.start_node.name} → {self.end_node.name}\n'
+                    # Логируем информацию о маршруте
+                    logger.info(
+                        f'✓ Маршрут (локальный): {self.start_node.name} → {self.end_node.name} | '
                         f'Расстояние: {distance:.0f}м | '
                         f'Время: {distance/1.4:.0f}мин'
                     )
-                    self.route_info_label.text = info_text
-                    logger.info(f"Local pathfinding successful: {len(route_nodes)} nodes")
+                    
+                    # Логируем производительность
+                    is_cached = "(кэшировано)" if search_time < 0.001 else ""
+                    logger.info(f"Pathfinding: {search_time*1000:.2f}ms {is_cached} | Cache size: {cache_size} | Path length: {len(route_nodes)} nodes")
                 
                 Clock.schedule_once(lambda dt: update_route(), 0)
             else:
@@ -482,6 +960,33 @@ class MapScreen(Screen):
         """Уменьшить масштаб"""
         self.map_widget.zoom_out()
 
+    def _on_keyboard(self, window, key, scancode, codepoint, modifier):
+        """Обработка клавиатуры для горячих клавиш"""
+        # Ctrl+A или Ctrl+Shift+A - открыть админ панель
+        if key == 97 and 'ctrl' in modifier:  # Ctrl+A
+            logger.info("[MapScreen] Opening admin panel (Ctrl+A)")
+            self.manager.current = 'admin'
+            return True
+        
+        # Ctrl+E - открыть редактор графа
+        if key == 101 and 'ctrl' in modifier:  # Ctrl+E
+            if self.building:
+                logger.info("[MapScreen] Opening graph editor (Ctrl+E)")
+                editor_screen = self.manager.get_screen('graph_editor')
+                editor_screen.building = self.building
+                self.manager.current = 'graph_editor'
+                return True
+        
+        return False
+
+    def on_leave(self):
+        """Отписка от событий при выходе"""
+        logger.info("[MapScreen.on_leave] Unbinding keyboard")
+        try:
+            Window.unbind(on_keyboard=self._on_keyboard)
+        except:
+            pass  # Может быть уже отписано
+
     def on_back(self, instance):
         """Вернуться на главный экран"""
         self.manager.current = 'home'
@@ -492,7 +997,7 @@ class MapScreen(Screen):
         self.end_node = None
         self.current_route = None
         self.map_widget.clear_selection()
-        self.route_info_label.text = 'Нажмите на две точки для построения маршрута'
+        logger.info("Selection cancelled")
 
     def _highlight_graph(self):
         """Подсветить граф между выбранными точками"""

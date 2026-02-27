@@ -2,6 +2,7 @@
 Построитель графа из данных узлов
 """
 import math
+import heapq  # Для оптимизации поиска маршрута
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 import logging
@@ -22,6 +23,13 @@ class GraphBuilder:
 
     DISTANCE_THRESHOLD = 150  # Максимальное расстояние для автосвязи
     FLOOR_CHANGE_PENALTY = 2.0  # Штраф за смену этажа
+    
+    # Кэш для маршрутов (на время сеанса)
+    _route_cache: Dict[Tuple[str, str], Optional[Tuple[List[str], float]]] = {}
+    
+    # Кэш для графов (по хешу узлов)
+    _graph_cache: Dict[int, List[GraphEdge]] = {}
+    _graph_cache_key: Optional[int] = None
 
     @staticmethod
     def calculate_distance(x1: float, y1: float, x2: float, y2: float) -> float:
@@ -31,7 +39,7 @@ class GraphBuilder:
     @staticmethod
     def build_edges_from_nodes(nodes: List[dict]) -> List[GraphEdge]:
         """
-        Построить рёбра на основе близости узлов
+        Построить рёбра на основе близости узлов с кэшированием
         
         Args:
             nodes: Список узлов с координатами
@@ -39,6 +47,14 @@ class GraphBuilder:
         Returns:
             Список рёбер графа
         """
+        # Вычисляем хеш узлов для кэширования
+        nodes_key = hash(tuple((str(n['Id']), n['X'], n['Y'], n['Floor']) for n in nodes))
+        
+        # Проверяем кэш
+        if nodes_key in GraphBuilder._graph_cache:
+            logger.debug(f"Using cached graph ({len(GraphBuilder._graph_cache[nodes_key])} edges)")
+            return GraphBuilder._graph_cache[nodes_key]
+        
         edges = []
         edges_set = set()  # Для избежания дубликатов
 
@@ -136,9 +152,7 @@ class GraphBuilder:
 
                     if edge_key not in edges_set:
                         edges_set.add(edge_key)
-                        floor_distance = abs(elev1['Floor'] - elev2['Floor']) * 30
-                        weight = floor_distance * GraphBuilder.FLOOR_CHANGE_PENALTY
-
+                        weight = 10  # Лифт быстрее
                         edges.append(GraphEdge(
                             from_id=str(elev1['Id']),
                             to_id=str(elev2['Id']),
@@ -149,8 +163,11 @@ class GraphBuilder:
                             to_id=str(elev1['Id']),
                             weight=weight
                         ))
-
-        logger.info(f"Built {len(edges)} edges from {len(nodes)} nodes")
+        
+        # Сохраняем в кэш
+        GraphBuilder._graph_cache[nodes_key] = edges
+        logger.debug(f"Built and cached graph ({len(edges)} edges)")
+        
         return edges
 
     @staticmethod
@@ -172,11 +189,14 @@ class GraphBuilder:
 
         return adjacency
 
-    @staticmethod
-    def find_shortest_path(start_id: str, end_id: str, edges: List[GraphEdge], 
+    @classmethod
+    def find_shortest_path(cls, start_id: str, end_id: str, edges: List[GraphEdge], 
                           nodes_dict: Dict[str, dict]) -> Optional[Tuple[List[str], float]]:
         """
-        Найти кратчайший путь между двумя узлами используя алгоритм Dijkstra
+        Найти кратчайший путь между двумя узлами используя оптимизированный Dijkstra
+        
+        Оптимизация: O((V+E)logV) со счётчиком приоритетов вместо O(V²) с поиском минимума
+        + кэширование результатов
         
         Args:
             start_id: ID стартового узла
@@ -190,42 +210,104 @@ class GraphBuilder:
         if start_id == end_id:
             return [start_id], 0.0
         
-        adjacency = GraphBuilder.edges_to_adjacency_list(edges)
+        # Проверка кэша
+        cache_key = (start_id, end_id)
+        if cache_key in cls._route_cache:
+            return cls._route_cache[cache_key]
         
-        # Инициализация расстояний
+        # Построение adjacency list
+        adjacency = cls.edges_to_adjacency_list(edges)
+        
+        # Инициализация для оптимизированного Dijkstra
         distances = {node_id: float('inf') for node_id in nodes_dict.keys()}
         distances[start_id] = 0.0
-        previous = {node_id: None for node_id in nodes_dict.keys()}
-        unvisited = set(nodes_dict.keys())
+        previous = {}
         
-        while unvisited:
-            # Найти непосещённый узел с минимальным расстоянием
-            current = min(unvisited, key=lambda x: distances[x], default=None)
+        # Приоритетная очередь: (距離, node_id)
+        # Используем минимальную кучу (heapq)
+        pq = [(0.0, start_id)]
+        visited = set()
+        visited_count = 0
+        nodes_count = len(nodes_dict)
+        
+        while pq and visited_count < nodes_count:
+            current_dist, current = heapq.heappop(pq)
             
-            if current is None or distances[current] == float('inf'):
-                break  # Нет пути до конца
+            # Пропускаем если уже посетили
+            if current in visited:
+                continue
             
+            # Если текущее расстояние больше известного - пропускаем
+            if current_dist > distances[current]:
+                continue
+            
+            visited.add(current)
+            visited_count += 1
+            
+            # Ранний выход при достижении конца
             if current == end_id:
                 # Восстановить путь
                 path = []
                 node = end_id
-                while node is not None:
+                while node in previous or node == start_id:
                     path.append(node)
+                    if node == start_id:
+                        break
                     node = previous[node]
-                return list(reversed(path)), distances[end_id]
-            
-            unvisited.remove(current)
+                
+                result = (list(reversed(path)), distances[end_id])
+                
+                # Кэшируем результат
+                cls._route_cache[cache_key] = result
+                return result
             
             # Обновить расстояния соседей
             if current in adjacency:
                 for neighbor, weight in adjacency[current]:
-                    if neighbor in unvisited:
+                    if neighbor not in visited:
                         new_distance = distances[current] + weight
+                        
                         if new_distance < distances[neighbor]:
                             distances[neighbor] = new_distance
                             previous[neighbor] = current
+                            
+                            # Добавляем в приоритетную очередь
+                            heapq.heappush(pq, (new_distance, neighbor))
         
+        # Кэшируем отрицательный результат
+        cls._route_cache[cache_key] = None
         return None  # Нет пути
+    
+    @classmethod
+    def clear_route_cache(cls):
+        """Очистить весь кэш маршрутов"""
+        cls._route_cache.clear()
+        logger.debug(f"Route cache cleared")
+    
+    @classmethod
+    def clear_route_from_cache(cls, start_id: str, end_id: str):
+        """Очистить конкретный маршрут из кэша"""
+        cache_key = (start_id, end_id)
+        if cache_key in cls._route_cache:
+            del cls._route_cache[cache_key]
+            logger.debug(f"Route {start_id} -> {end_id} removed from cache")
+    
+    @classmethod
+    def get_cache_size(cls) -> int:
+        """Получить размер кэша маршрутов"""
+        return len(cls._route_cache)
+    
+    @classmethod
+    def clear_graph_cache(cls):
+        """Очистить весь кэш графов"""
+        cls._graph_cache.clear()
+        cls._graph_cache_key = None
+        logger.debug(f"Graph cache cleared")
+    
+    @classmethod
+    def get_graph_cache_size(cls) -> int:
+        """Получить размер кэша графов"""
+        return len(cls._graph_cache)
 
 
 # Статические данные из cds.csv для демонстрации
@@ -316,4 +398,30 @@ DEMO_NODES_CSV = [
     {'Id': 147, 'Name': 'Лифт', 'Floor': 2, 'Type': 'Elevator', 'X': 335, 'Y': 753},
     {'Id': 148, 'Name': 'Лестница', 'Floor': 2, 'Type': 'Staircase', 'X': 1453, 'Y': 686},
     {'Id': 149, 'Name': 'Лифт', 'Floor': 2, 'Type': 'Elevator', 'X': 1441, 'Y': 758},
+    # Этаж -1 (подвал)
+    {'Id': 200, 'Name': 'Лестница', 'Floor': -1, 'Type': 'Staircase', 'X': 1135, 'Y': 553},
+    {'Id': 201, 'Name': 'Лифт', 'Floor': -1, 'Type': 'Elevator', 'X': 1022, 'Y': 556},
+    {'Id': 202, 'Name': 'Техническое помещение', 'Floor': -1, 'Type': 'Room', 'X': 500, 'Y': 600},
+    {'Id': 203, 'Name': 'Хранилище', 'Floor': -1, 'Type': 'Room', 'X': 1200, 'Y': 800},
+    {'Id': 204, 'Name': 'Коридор подвала', 'Floor': -1, 'Type': 'Corridor', 'X': 800, 'Y': 700},
+    # Этаж 3
+    {'Id': 300, 'Name': 'Лестница', 'Floor': 3, 'Type': 'Staircase', 'X': 1135, 'Y': 553},
+    {'Id': 301, 'Name': 'Лифт', 'Floor': 3, 'Type': 'Elevator', 'X': 1022, 'Y': 556},
+    {'Id': 302, 'Name': 'Офис 301', 'Floor': 3, 'Type': 'Room', 'X': 800, 'Y': 500},
+    {'Id': 303, 'Name': 'Офис 302', 'Floor': 3, 'Type': 'Room', 'X': 1200, 'Y': 600},
+    {'Id': 304, 'Name': 'Коридор этажа 3', 'Floor': 3, 'Type': 'Corridor', 'X': 1000, 'Y': 550},
+    # Этаж 4
+    {'Id': 400, 'Name': 'Лестница', 'Floor': 4, 'Type': 'Staircase', 'X': 1135, 'Y': 553},
+    {'Id': 401, 'Name': 'Лифт', 'Floor': 4, 'Type': 'Elevator', 'X': 1022, 'Y': 556},
+    {'Id': 402, 'Name': 'Офис 401', 'Floor': 4, 'Type': 'Room', 'X': 800, 'Y': 500},
+    {'Id': 403, 'Name': 'Офис 402', 'Floor': 4, 'Type': 'Room', 'X': 1200, 'Y': 600},
+    {'Id': 404, 'Name': 'Конференц-зал', 'Floor': 4, 'Type': 'Room', 'X': 1500, 'Y': 400},
+    {'Id': 405, 'Name': 'Коридор этажа 4', 'Floor': 4, 'Type': 'Corridor', 'X': 1000, 'Y': 550},
+    # Этаж 5
+    {'Id': 500, 'Name': 'Лестница', 'Floor': 5, 'Type': 'Staircase', 'X': 1135, 'Y': 553},
+    {'Id': 501, 'Name': 'Лифт', 'Floor': 5, 'Type': 'Elevator', 'X': 1022, 'Y': 556},
+    {'Id': 502, 'Name': 'Кабинет руководителя', 'Floor': 5, 'Type': 'Room', 'X': 1500, 'Y': 800},
+    {'Id': 503, 'Name': 'Кабинет 501', 'Floor': 5, 'Type': 'Room', 'X': 800, 'Y': 600},
+    {'Id': 504, 'Name': 'Терраса', 'Floor': 5, 'Type': 'Room', 'X': 1800, 'Y': 1000},
+    {'Id': 505, 'Name': 'Коридор этажа 5', 'Floor': 5, 'Type': 'Corridor', 'X': 1000, 'Y': 550},
 ]

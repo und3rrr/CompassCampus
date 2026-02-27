@@ -37,6 +37,7 @@ class AdminScreen(Screen):
         self.qr_service = qr_service
         self.closure_service = closure_service
         self.api_client = get_api_client()
+        self.building = None  # Храним текущее здание
         
         # Основной лейаут
         main_layout = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(10))
@@ -85,6 +86,14 @@ class AdminScreen(Screen):
         stats_btn.bind(on_press=self.show_statistics)
         button_layout.add_widget(stats_btn)
 
+        # Кнопка "Редактор графов"
+        editor_btn = Button(
+            text='✏️\nРедактор',
+            background_color=(0.8, 0.6, 0.3, 1.0)
+        )
+        editor_btn.bind(on_press=self.show_graph_editor)
+        button_layout.add_widget(editor_btn)
+
         main_layout.add_widget(button_layout)
 
         # Информационная панель
@@ -106,11 +115,31 @@ class AdminScreen(Screen):
         self.add_widget(main_layout)
 
     def on_enter(self):
-        """Проверить права администратора"""
+        """Проверить права администратора и синхронизировать building"""
         user = self.auth_service.get_current_user()
         if not user or user.role != UserRole.ADMIN:
             logger.warning("Non-admin user tried to access admin screen")
             self.manager.current = 'home'
+            return
+        
+        # Если building не установлен, пытаемся получить из map_screen
+        if not self.building:
+            try:
+                map_screen = self.manager.get_screen('map')
+                if hasattr(map_screen, 'building') and map_screen.building:
+                    self.building = map_screen.building
+                    logger.info(f"AdminScreen: synced building from map_screen: {map_screen.building.name}")
+            except Exception as e:
+                logger.warning(f"Failed to sync building from map_screen: {e}")
+
+    def set_building(self, building):
+        """Установить текущее здание"""
+        if building is None:
+            logger.warning("[AdminScreen.set_building] Building is None")
+            return
+        logger.info(f"[AdminScreen.set_building] Called with building: {building.name}")
+        self.building = building
+        logger.info(f"[AdminScreen.set_building] Done!")
 
     def show_routes_management(self, instance):
         """Показать управление маршрутами"""
@@ -294,6 +323,32 @@ class AdminScreen(Screen):
         )
         close_btn.bind(on_press=popup.dismiss)
         popup.open()
+
+    def show_graph_editor(self, instance):
+        """Открыть редактор графов"""
+        self.info_label.text = "Переходим в режим редактора графов..."
+        
+        try:
+            graph_editor_screen = self.manager.get_screen('graph_editor')
+            
+            # Пытаемся получить building из разных источников
+            building = self.building
+            
+            # Если нет в админскрине, пытаемся получить из карты
+            if not building:
+                map_screen = self.manager.get_screen('map')
+                if hasattr(map_screen, 'building') and map_screen.building:
+                    building = map_screen.building
+            
+            if building:
+                graph_editor_screen.set_building(building)
+                self.manager.current = 'graph_editor'
+            else:
+                self.info_label.text = "❌ Сначала выберите здание на экране карты"
+                logger.warning("No building selected for graph editor")
+        except Exception as e:
+            logger.error(f"Error opening graph editor: {e}")
+            self.info_label.text = f"❌ Ошибка: {str(e)}"
 
     def on_back(self, instance):
         """Вернуться на домашний экран"""

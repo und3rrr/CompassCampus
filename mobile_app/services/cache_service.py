@@ -124,6 +124,59 @@ class CacheService:
         """Проверить существование ключа в кэше"""
         return os.path.exists(self._get_cache_path(key))
 
+    def save_building(self, building) -> bool:
+        """
+        Сохранить здание в кэш с полной информацией о узлах и рёбрах
+
+        Args:
+            building: Объект здания с nodes и edges
+
+        Returns:
+            True если успешно, False иначе
+        """
+        try:
+            building_data = {
+                "id": getattr(building, 'id', None),
+                "name": getattr(building, 'name', 'Unknown'),
+                "address": getattr(building, 'address', ''),
+                "floors": getattr(building, 'floors', 1),
+                "nodes": [
+                    {
+                        "id": node.get('id') if isinstance(node, dict) else getattr(node, 'id', None),
+                        "name": node.get('name') if isinstance(node, dict) else getattr(node, 'name', ''),
+                        "x": node.get('x') if isinstance(node, dict) else getattr(node, 'x', 0),
+                        "y": node.get('y') if isinstance(node, dict) else getattr(node, 'y', 0),
+                        "floor": node.get('floor') if isinstance(node, dict) else getattr(node, 'floor', 1),
+                        "type": node.get('type') if isinstance(node, dict) else getattr(node, 'node_type', 'Room')
+                    }
+                    for node in getattr(building, 'nodes', [])
+                ],
+                "edges": [
+                    [edge[0], edge[1]] if isinstance(edge, (tuple, list)) and len(edge) >= 2 else edge
+                    for edge in getattr(building, 'edges', [])
+                ]
+            }
+            logger.info(f"Saving building {building_data['id']} with {len(building_data['nodes'])} nodes and {len(building_data['edges'])} edges")
+            result = self.set(f"building_{building_data['id']}", building_data)
+            if result:
+                logger.info(f"Building {building_data['id']} saved successfully to cache")
+            return result
+        except Exception as e:
+            logger.error(f"Error saving building: {e}")
+            return False
+
+    def load_building(self, building_id: int):
+        """
+        Загрузить здание из кэша
+
+        Args:
+            building_id: ID здания
+
+        Returns:
+            Данные здания или None
+        """
+        return self.get(f"building_{building_id}")
+
 
 # Глобальный экземпляр кэша
 _cache_service: Optional[CacheService] = None

@@ -7,5 +7,6 @@ from .login_screen import LoginScreen
 from .admin_screen import AdminScreen
 from .history_screen import HistoryScreen
 from .qr_scanner_screen import QRScannerScreen
+from .graph_editor_screen import GraphEditorScreen
 
-__all__ = ['HomeScreen', 'MapScreen', 'LoginScreen', 'AdminScreen', 'HistoryScreen', 'QRScannerScreen']
+__all__ = ['HomeScreen', 'MapScreen', 'LoginScreen', 'AdminScreen', 'HistoryScreen', 'QRScannerScreen', 'GraphEditorScreen']

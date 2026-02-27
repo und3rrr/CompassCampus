@@ -1,0 +1,235 @@
+# 📚 Индекс документации CampusCompass
+
+Центральный индекс всей документации проекта CampusCompass.
+
+## 116 документов собрано в одной папке
+
+---
+
+## 🚀 Начните отсюда
+
+| Документ | Описание |
+|----------|---------|
+| [START_HERE.md](START_HERE.md) | **НАЧНИТЕ ОТСЮДА!** Полное введение в проект |
+| [QUICK_START.md](QUICK_START.md) | Быстрый старт за 5 минут |
+| [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | Полный обзор проекта |
+| [README_PHASE5.md](README_PHASE5.md) | Завершённое мобильное приложение |
+
+---
+
+## 📱 Мобильное приложение (Kivy + Python)
+
+| Документ | Описание |
+|----------|---------|
+| [QUICK_START_GUIDE.md](QUICK_START_GUIDE.md) | Гайд быстрого старта |
+| [ANDROID_DEVELOPER_GUIDE.md](ANDROID_DEVELOPER_GUIDE.md) | Разработка для Android |
+| [DELIVERY_PACKAGE.md](DELIVERY_PACKAGE.md) | Пакет доставки |
+
+---
+
+## 🗺️ Планы этажей (PNG)
+
+| Документ | Описание |
+|----------|---------|
+| [PNG_PRIMARY_FORMAT_GUIDE.md](PNG_PRIMARY_FORMAT_GUIDE.md) | Основной формат PNG |
+| [FLOOR_PLANS_ARCHITECTURE.md](FLOOR_PLANS_ARCHITECTURE.md) | Архитектура планов этажей |
+| [FLOOR_PLANS_SUMMARY.md](FLOOR_PLANS_SUMMARY.md) | Сводка по планам этажей |
+
+---
+
+## 📐 QR сканер
+
+| Документ | Описание |
+|----------|---------|
+| [QR_SCANNER_DOCUMENTATION.md](QR_SCANNER_DOCUMENTATION.md) | Полная документация |
+| [USER_GUIDE_QR_SCANNER.md](USER_GUIDE_QR_SCANNER.md) | Пользовательский гайд |
+| [TEST_QR_SCANNER.md](TEST_QR_SCANNER.md) | Тестирование QR сканера |
+
+---
+
+## 🎨 Редактор графов
+
+| Документ | Описание |
+|----------|---------|
+| [EDITOR_V2_COMPLETE.md](EDITOR_V2_COMPLETE.md) | Редактор v2 завершён |
+| [GRAPH_EDITOR_REDESIGN.md](GRAPH_EDITOR_REDESIGN.md) | Переработка дизайна |
+| [EDITOR_QUICK_REFERENCE.md](EDITOR_QUICK_REFERENCE.md) | Быстрая справка |
+
+---
+
+## 🛣️ Путефайндинг (маршрутизация)
+
+| Документ | Описание |
+|----------|---------|
+| [PATHFINDING_SOLUTION.md](PATHFINDING_SOLUTION.md) | Решение путефайндинга |
+| [PATHFINDING_OPTIMIZATION_COMPLETE.md](PATHFINDING_OPTIMIZATION_COMPLETE.md) | Оптимизация завершена |
+
+---
+
+## 🔧 Техническая архитектура
+
+| Документ | Описание |
+|----------|---------|
+| [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md) | Техническая архитектура |
+| [VISUAL_ARCHITECTURE.md](VISUAL_ARCHITECTURE.md) | Визуальная архитектура |
+| [IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) | Гайд реализации |
+
+---
+
+## 📊 Отчёты и фазы
+
+| Документ | Описание |
+|----------|---------|
+| [FINAL_REPORT.md](FINAL_REPORT.md) | Финальный отчёт |
+| [PHASE5_FINAL_REPORT.md](PHASE5_FINAL_REPORT.md) | Финальный отчёт Фазы 5 |
+| [PHASE11_COMPLETE.md](PHASE11_COMPLETE.md) | Фаза 11 завершена |
+
+---
+
+## 📚 Все документы (116 файлов)
+
+### A-C
+- ANALYSIS_SUMMARY.md
+- ANDROID_DEVELOPER_GUIDE.md
+- API_TIMEOUT_OPTIMIZATION.md
+- API_TIMEOUT_QUICK.md
+- BUGFIX_EDGES_LOST.md
+- BUGFIX_QUICK_SUMMARY.md
+- CANVAS_CLIPPING_GUIDE.md
+- CANVAS_CLIPPING_QUICK_REFERENCE.md
+- CODE_EXAMPLES.md
+- COMPLETE_CHECKLIST.md
+- COMPLETION_CHECKLIST_SVG_SNAP.md
+- COMPLETION_SUMMARY.md
+- CORRIDOR_ZOOM_UPDATE.md
+
+### D-F
+- DELIVERY_PACKAGE.md
+- DEVELOPMENT_COMPLETE.md
+- DOCUMENTATION_GUIDE.md
+- DOCUMENTATION_INDEX.md
+- EDITOR_CLIPPING_GUIDE.md
+- EDITOR_QUICK_REFERENCE.md
+- EDITOR_REDESIGN_COMPLETE.md
+- EDITOR_V2_COMPLETE.md
+- EDITOR_V2_FINAL_REPORT.md
+- EDITOR_V2_INDEX.md
+- EDITOR_V2_MANIFEST.md
+- EDITOR_V2_README.md
+- EDITOR_V2_STATISTICS.md
+- EDITOR_V2_SUMMARY.md
+- FILES_CHANGED_V2_1.md
+- FILES_INDEX.md
+- FILES_INDEX_PHASE5.md
+- FINAL_OPTIMIZATION_REPORT.md
+- FINAL_QR_SCANNER_REPORT.md
+- FINAL_REPORT.md
+- FINAL_SUMMARY_SVG_SNAP.md
+- FLOOR_PLAN_AUTO_SCALING_GUIDE.md
+- FLOOR_PLANS_ARCHITECTURE.md
+- FLOOR_PLANS_INTEGRATION_TODO.md
+- FLOOR_PLANS_SUMMARY.md
+
+### G-O
+- GRAPH_EDITOR_IMPROVEMENTS.md
+- GRAPH_EDITOR_REDESIGN.md
+- HOTFIX_NODE_TYPE.md
+- IMPLEMENTATION_GUIDE.md
+- OPTIMIZATION_FINAL_REPORT.md
+- PATHFINDING_OPTIMIZATION_COMPLETE.md
+- PATHFINDING_OPTIMIZATION_FINAL.md
+- PATHFINDING_OPTIMIZATION_PHASE2.md
+- PATHFINDING_OPTIMIZATION_QUICK_REF.md
+- PATHFINDING_QUICK_SUMMARY.md
+- PATHFINDING_SOLUTION.md
+- PHASE_5_EXTENDED_FINAL.md
+- PHASE10_10B_PROJECT_SUMMARY.md
+- PHASE10_COMPLETE.md
+- PHASE10B_COMPLETE.md
+- PHASE10B_QUICK_REFERENCE.md
+- PHASE11_COMPLETE.md
+- PHASE11_QUICK_REFERENCE.md
+- PHASE4_COMPLETE.md
+- PHASE5_EXTENDED.md
+- PHASE5_EXTENDED_COMPLETE.md
+- PHASE5_FINAL_REPORT.md
+- PHASE5_REPORT.md
+- PHASE5_SVG_SNAP_COMPLETE.md
+- PNG_PRIMARY_FORMAT_GUIDE.md
+- PNG_PRIMARY_FORMAT_QUICK_REFERENCE.md
+- PRD.md
+- PROJECT_COMPLETION_V2_1.md
+- PROJECT_OVERVIEW.md
+
+### Q-Z
+- QR_SCANNER_COMPLETION_REPORT.md
+- QR_SCANNER_DOCUMENTATION.md
+- QR_SCANNER_DOCUMENTATION_INDEX.md
+- QR_SCANNER_FINAL_SUMMARY.md
+- QR_SCANNER_MODULE_README.md
+- QR_SCANNER_RELEASE_NOTES.md
+- QUICK_REFERENCE.md
+- QUICK_REFERENCE_SVG_SNAP.md
+- QUICK_START.md
+- QUICK_START_GUIDE.md
+- QUICK_TUTORIAL_CORRIDOR_ZOOM.md
+- README.md
+- README_PHASE4.md
+- README_PHASE5.md
+- README_SVG_SNAP.md
+- REQUIREMENTS_COMPLETED.md
+- SOLUTION_CHECKLIST.md
+- START_HERE.md
+- START_PHASE5.md
+- SVG_CODE_EXAMPLES.md
+- SVG_DIRECT_RENDERING.md
+- SVG_FILES_INDEX.md
+- SVG_FLOOR_PLANS_GUIDE.md
+- SVG_IMPLEMENTATION_SUMMARY.md
+- SVG_PARSER_IMPLEMENTATION_REPORT.md
+- SVG_QUICK_START.md
+- SVG_SNAP_CHANGES_INDEX.md
+- SVG_SNAP_DOCUMENTATION_INDEX.md
+- SVG_SNAP_IMPLEMENTATION.md
+- SVG_SNAP_QUICKSTART.md
+- SVG_ZOOM_FIX_SUMMARY.md
+- TECHNICAL_ARCHITECTURE.md
+- TEST_QR_SCANNER.md
+- USER_GUIDE_QR_SCANNER.md
+- V2_1_FINAL_SUMMARY.md
+- V2_1_MASTER_INDEX.md
+- V2_1_README.md
+- V2_2_BUGFIX_SUMMARY.md
+- V2_2_DEPLOYMENT_GUIDE.md
+- V2_2_FINAL_REPORT.md
+- V2_2_MASTER_INDEX.md
+- V3_0_IMPLEMENTATION_SUMMARY.md
+- V3_0_INTEGRATION_TESTING_GUIDE.md
+- V3_0_MASTER_INDEX.md
+- V3_0_MODERN_INTERFACE_GUIDE.md
+- VISUAL_ARCHITECTURE.md
+- VISUAL_BUGFIX_EXPLANATION.md
+- VISUAL_REFERENCE_V2_1.md
+- ZOOM_CENTER_FIX.md
+- ZOOM_CENTER_QUICK.md
+
+---
+
+## 🔍 Быстрый поиск по темам
+
+| Тема | Документы |
+|------|-----------|
+| 🚀 Начало | START_HERE.md, QUICK_START.md, PROJECT_OVERVIEW.md |
+| 📱 Мобилка | README_PHASE5.md, QUICK_START_GUIDE.md, ANDROID_DEVELOPER_GUIDE.md |
+| 🗺️ Карты | FLOOR_PLANS_ARCHITECTURE.md, PNG_PRIMARY_FORMAT_GUIDE.md |
+| 📐 QR | QR_SCANNER_DOCUMENTATION.md, USER_GUIDE_QR_SCANNER.md |
+| 🎨 Редактор | EDITOR_V2_COMPLETE.md, GRAPH_EDITOR_REDESIGN.md |
+| 🛣️ Маршруты | PATHFINDING_SOLUTION.md, PATHFINDING_OPTIMIZATION_COMPLETE.md |
+| 🔧 Архитектура | TECHNICAL_ARCHITECTURE.md, VISUAL_ARCHITECTURE.md |
+| ✅ Отчёты | FINAL_REPORT.md, PHASE11_COMPLETE.md |
+
+---
+
+**Все документы собраны в одной папке для удобства!**
+
+_Последнее обновление: 27 февраля 2026 г_
